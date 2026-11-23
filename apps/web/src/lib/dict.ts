@@ -1,0 +1,23 @@
+export const fa = {
+  appName: "اپ‌ساز",
+  login: "ورود",
+  register: "ثبت‌نام",
+  email: "ایمیل",
+  password: "رمز عبور",
+  displayName: "نام نمایشی",
+  projects: "پروژه‌ها",
+  newProject: "پروژه جدید",
+  chat: "گفتگو",
+  preview: "پیش‌نمایش",
+  send: "ارسال",
+  stop: "توقف",
+  waiting: "در صف…",
+  running: "در حال ساخت…",
+  previewEmpty: "پس از اولین اجرا پیش‌نمایش اینجا نمایش داده می‌شود",
+  previewPendingVercel:
+    "پس از پایان ساخت، پیش‌نمایش Vercel Sandbox اینجا باز می‌شود…",
+  previewLocal: "پیش‌نمایش محلی (Vite روی این سیستم)",
+  previewVercel: "پیش‌نمایش Vercel Sandbox",
+  activity: "فعالیت agent",
+  activeRun: "یک اجرا در حال انجام است",
+} as const;

@@ -1,0 +1,1 @@
+"""Custom OpenHands tool executors backed by WorkspaceAdapter (extend per docs/openhands-sdk.md)."""
