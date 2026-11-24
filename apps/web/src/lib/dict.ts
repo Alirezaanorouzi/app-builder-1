@@ -15,9 +15,21 @@ export const fa = {
   running: "در حال ساخت…",
   previewEmpty: "پس از اولین اجرا پیش‌نمایش اینجا نمایش داده می‌شود",
   previewPendingVercel:
-    "پس از پایان ساخت، پیش‌نمایش Vercel Sandbox اینجا باز می‌شود…",
+    "در حال بالا آوردن Vercel Sandbox… پس از آماده شدن لینک اینجا می‌آید",
+  previewWaking:
+    "در حال آماده‌سازی sandbox (Vite و Agent Server)…",
+  sandboxWarming: "در حال آماده‌سازی sandbox برای ارسال سریع‌تر…",
+  sandboxWarmingHint: "تا وقتی این پیام هست ارسال غیرفعال است.",
+  sandboxWarmingComposer: "در حال آماده‌سازی sandbox… لطفاً چند ثانیه صبر کنید.",
   previewLocal: "پیش‌نمایش محلی (Vite روی این سیستم)",
   previewVercel: "پیش‌نمایش Vercel Sandbox",
+  previewOpenLink: "باز کردن در تب جدید",
+  previewCopyLink: "کپی لینک",
+  previewCopied: "کپی شد",
   activity: "فعالیت agent",
+  activityHide: "پنهان",
+  activityShow: "نمایش",
   activeRun: "یک اجرا در حال انجام است",
+  composerPlaceholder: "ایده بسازید، بگویید چه بسازیم…",
+  chatEmpty: "اولین پیام را بنویسید تا ساخت شروع شود.",
 } as const;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { listLiaraModelsFromEnv, pickLiaraModel } from "@/lib/liara-models";
 
 export async function POST(
   req: Request,
@@ -11,11 +12,14 @@ export async function POST(
   const { id: projectId } = await params;
   const body = await req.json();
   const content = String(body.content ?? "").trim();
-  const model = String(
-    body.model ??
-      process.env.NEXT_PUBLIC_DEFAULT_MODEL ??
-      process.env.LIARA_MODELS?.split(",")[0]?.trim() ??
-      "deepseek/deepseek-v4.1-flash",
+  const defaultModel =
+    process.env.NEXT_PUBLIC_DEFAULT_MODEL?.trim() ??
+    listLiaraModelsFromEnv()[0] ??
+    "deepseek/deepseek-v4.1-flash-1017";
+  const model = pickLiaraModel(
+    body.model != null ? String(body.model) : null,
+    defaultModel,
+    listLiaraModelsFromEnv(),
   );
 
   const proj = await query(`SELECT id FROM projects WHERE id = $1 AND owner_id = $2`, [

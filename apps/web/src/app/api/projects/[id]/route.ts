@@ -15,7 +15,8 @@ export async function GET(
             s.provider,
             s.external_id,
             s.name AS sandbox_name,
-            s.status AS sandbox_status
+            s.status AS sandbox_status,
+            s.agent_server_status
      FROM projects p
      LEFT JOIN sandboxes s ON s.project_id = p.id
      WHERE p.id = $1 AND p.owner_id = $2`,

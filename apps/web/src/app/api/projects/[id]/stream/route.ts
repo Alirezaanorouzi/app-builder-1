@@ -11,19 +11,20 @@ export async function GET(
   const { id: projectId } = await params;
 
   const encoder = new TextEncoder();
-  let interval: ReturnType<typeof setInterval> | undefined;
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
   const stream = new ReadableStream({
     async start(controller) {
       let lastSnapshot = "";
+      let pollMs = 1000;
       const send = (event: string, data: unknown) => {
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
-      const tick = async () => {
+      const tick = async (): Promise<number> => {
         const proj = await query(
           `SELECT p.id FROM projects p WHERE p.id = $1 AND p.owner_id = $2`,
           [projectId, userId],
         );
-        if (!proj.rows[0]) return;
+        if (!proj.rows[0]) return pollMs;
 
         const msgs = await query(
           `SELECT m.id, m.role, m.content, m.created_at, m.run_id
@@ -32,8 +33,8 @@ export async function GET(
            ORDER BY m.created_at DESC LIMIT 50`,
           [projectId],
         );
-        const runs = await query<{ id: string; status: string }>(
-          `SELECT id, status FROM agent_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        const runs = await query<{ id: string; status: string; live_output: string | null }>(
+          `SELECT id, status, live_output FROM agent_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
           [projectId],
         );
         const sandbox = await query<{
@@ -42,9 +43,16 @@ export async function GET(
           external_id: string | null;
           status: string | null;
           name: string | null;
+          agent_server_status: string | null;
         }>(
-          `SELECT preview_url, provider, external_id, status, name
+          `SELECT preview_url, provider, external_id, status, name, agent_server_status
            FROM sandboxes WHERE project_id = $1 ORDER BY last_active_at DESC NULLS LAST LIMIT 1`,
+          [projectId],
+        );
+        const wake = await query<{ id: string; status: string }>(
+          `SELECT id, status FROM sandbox_wake_requests
+           WHERE project_id = $1 AND status IN ('queued', 'running')
+           ORDER BY created_at DESC LIMIT 1`,
           [projectId],
         );
         const activeRun = runs.rows[0];
@@ -63,31 +71,49 @@ export async function GET(
         }
         const sb = sandbox.rows[0];
         const previewUrl = sb?.preview_url ?? null;
+        const previewWake = wake.rows[0] ?? null;
+        const liveOutput =
+          activeRun?.status === "running" ? activeRun.live_output ?? null : null;
         const snapshot = JSON.stringify({
           msgs: msgs.rows,
           run: activeRun,
+          liveOutput,
           previewUrl,
           runEvents,
           sandbox: sb,
+          previewWake,
         });
         if (snapshot !== lastSnapshot) {
           lastSnapshot = snapshot;
           send("update", {
             messages: [...msgs.rows].reverse(),
             activeRun,
+            liveOutput,
             previewUrl,
             runEvents,
             sandbox: sb ?? null,
+            previewWake,
           });
         }
+        const active =
+          activeRun?.status === "queued" || activeRun?.status === "running" || previewWake != null;
+        return active ? 400 : 1000;
       };
-      await tick();
-      interval = setInterval(() => {
-        tick().catch(() => controller.close());
-      }, 1000);
+      const schedule = () => {
+        pollTimer = setTimeout(() => {
+          tick()
+            .then((next) => {
+              pollMs = next;
+              schedule();
+            })
+            .catch(() => controller.close());
+        }, pollMs);
+      };
+      pollMs = await tick();
+      schedule();
     },
     cancel() {
-      if (interval) clearInterval(interval);
+      if (pollTimer) clearTimeout(pollTimer);
     },
   });
 

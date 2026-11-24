@@ -35,6 +35,8 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 if (-not $ready) {
     Write-Warning "Postgres not ready yet. Check: docker compose logs postgres"
+} else {
+    & (Join-Path $Root "scripts\apply-migrations.ps1")
 }
 
 Write-Host "Installing Python worker dependencies..."

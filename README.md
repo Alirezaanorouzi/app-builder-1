@@ -21,7 +21,9 @@ Postgres listens on **host port 15432** (change `docker-compose.yml` if needed).
 
 On Windows, use **`127.0.0.1`** in `DATABASE_URL` (not `localhost`) so the Python worker’s connection pool can reach Postgres.
 
-**Sandbox:** `SANDBOX_PROVIDER=local` runs Vite on your machine; `vercel` keeps editing on local staging but **uploads to Vercel Sandbox after each run** for the preview URL (needs `VERCEL_TOKEN`, team, project). Agent steps are in `run_events` in the DB, not the worker console. Default `MAX_ITERATIONS=80` (raise in `.env` for big builds).
+**LLM (Liara only):** Set `LIARA_BASE_URL`, `LIARA_API_KEY`, and `LIARA_MODELS` in `.env` (comma-separated catalog IDs, same as [Liara chat completions](https://developers.liara.ir/ai-chat-completions/chat-completions/create-a-chat-completion)). The worker clears conflicting `OPENAI_*` env vars and bypasses HTTP proxies for `ai.liara.ir` so a dead local VPN proxy (`127.0.0.1:10809`) does not break the agent when the VPN is off. Turn off Windows “Use a proxy server” if it stays enabled without the VPN client.
+
+**Sandbox:** `SANDBOX_PROVIDER=local` runs Vite on your machine. With `vercel`, the default `AGENT_RUNTIME=auto` runs the **OpenHands Agent Server inside the sandbox VM** (ports 5173 + 8000) and uses a public **`LLM_PROXY_PUBLIC_URL`** for per-run virtual keys (see `.env.example`). Set `AGENT_RUNTIME=embedded` to keep the older worker staging + upload path. Golden snapshot: `apps/agent/scripts/create_vercel_base_snapshot.py` → `VERCEL_BASE_SNAPSHOT_ID`. Idle stop: `SANDBOX_IDLE_SECONDS` (default 300). `MAX_ITERATIONS=80` by default.
 
 ## Quick start (macOS / Linux)
 
@@ -38,7 +40,10 @@ Apply schema via Docker init or:
 
 ```bash
 psql $DATABASE_URL -f db/migrations/0001_init.sql
+psql $DATABASE_URL -f db/migrations/0002_agent_server.sql
 ```
+
+Windows (after `docker compose up -d postgres`): `.\scripts\apply-migrations.ps1`
 
 ## Layout
 
@@ -51,7 +56,7 @@ psql $DATABASE_URL -f db/migrations/0001_init.sql
 ## Tests
 
 ```bash
-python apps/agent/tests/test_archive_roundtrip.py
+cd apps/agent && PYTHONPATH=. python -m pytest tests -q
 ```
 
 ## Fonts

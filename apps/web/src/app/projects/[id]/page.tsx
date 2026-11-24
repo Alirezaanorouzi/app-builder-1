@@ -1,12 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { ActivityRail } from "@/components/ActivityRail";
+import { ChatMessage } from "@/components/ChatMessage";
+import { Composer } from "@/components/Composer";
 import { fa } from "@/lib/dict";
+import { useSandboxWake } from "@/hooks/useSandboxWake";
+import { isSandboxStackReady, usesVercelRemoteStack } from "@/lib/sandbox-wake";
 
 type Message = { id: string; role: string; content: string };
 
-type RunEvent = { seq: number; event_class: string; tool_name: string | null; summary: string };
+type RunEvent = {
+  seq: number;
+  event_class: string;
+  tool_name: string | null;
+  summary: string;
+  payload?: Record<string, unknown>;
+};
 
 type SandboxInfo = {
   preview_url: string | null;
@@ -14,7 +25,13 @@ type SandboxInfo = {
   external_id: string | null;
   status: string | null;
   name: string | null;
+  agent_server_status?: string | null;
 } | null;
+
+function shortModelLabel(model: string) {
+  const part = model.split("/").pop() ?? model;
+  return part.length > 28 ? `${part.slice(0, 25)}…` : part;
+}
 
 export default function ProjectPage() {
   const params = useParams();
@@ -26,8 +43,16 @@ export default function ProjectPage() {
   const [sandbox, setSandbox] = useState<SandboxInfo>(null);
   const [activeStatus, setActiveStatus] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [activityOpen, setActivityOpen] = useState(true);
+  const [copiedPreview, setCopiedPreview] = useState(false);
+  const [previewWaking, setPreviewWaking] = useState(false);
+  const [sendPending, setSendPending] = useState(false);
+  const [liveOutput, setLiveOutput] = useState<string | null>(null);
+  const activityEndRef = useRef<HTMLDivElement | null>(null);
+  const threadEndRef = useRef<HTMLDivElement | null>(null);
   const model =
-    process.env.NEXT_PUBLIC_DEFAULT_MODEL ?? "deepseek/deepseek-v4.1-flash";
+    process.env.NEXT_PUBLIC_DEFAULT_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
+  const modelLabel = shortModelLabel(model);
 
   useEffect(() => {
     fetch(`/api/projects/${id}`)
@@ -41,6 +66,7 @@ export default function ProjectPage() {
             external_id: p.external_id,
             status: p.sandbox_status,
             name: p.sandbox_name,
+            agent_server_status: p.agent_server_status ?? null,
           });
         }
       });
@@ -53,24 +79,75 @@ export default function ProjectPage() {
       setRunEvents(data.runEvents ?? []);
       if (data.previewUrl) setPreviewUrl(data.previewUrl);
       if (data.sandbox) setSandbox(data.sandbox);
+      const wake = data.previewWake as { status?: string } | null | undefined;
+      setPreviewWaking(Boolean(wake && (wake.status === "queued" || wake.status === "running")));
+      setLiveOutput(
+        data.activeRun?.status === "running" && data.liveOutput
+          ? String(data.liveOutput)
+          : null,
+      );
     });
     return () => es.close();
   }, [id]);
 
-  const busy = activeStatus === "queued" || activeStatus === "running";
+  const busy =
+    sendPending || activeStatus === "queued" || activeStatus === "running";
+  const activityChips = runEvents.slice(-14);
+  const wakeInFlight = previewWaking;
+
+  useSandboxWake(id, sandbox, previewUrl, { busy, wakeInFlight });
+
+  const stackReady = isSandboxStackReady(sandbox, previewUrl, wakeInFlight);
+  const sandboxWarming = usesVercelRemoteStack(sandbox) && !stackReady;
+
+  useEffect(() => {
+    if (!busy || !activityOpen) return;
+    activityEndRef.current?.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
+  }, [runEvents.length, busy, activityOpen]);
+
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, liveOutput]);
 
   async function send() {
-    if (!text.trim() || busy) return;
-    await fetch(`/api/projects/${id}/runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: text, model }),
-    });
+    const content = text.trim();
+    if (!content || busy || sandboxWarming) return;
+    const optimisticId = `opt-${Date.now()}`;
+    setSendPending(true);
+    setActiveStatus("queued");
+    setMessages((prev) => [...prev, { id: optimisticId, role: "user", content }]);
     setText("");
+    try {
+      const res = await fetch(`/api/projects/${id}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, model }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setActiveStatus(null);
+        alert(body.error ?? "ارسال ناموفق بود");
+        return;
+      }
+    } finally {
+      setSendPending(false);
+    }
   }
 
   async function stop() {
     await fetch(`/api/projects/${id}/runs`, { method: "DELETE" });
+  }
+
+  async function copyPreviewUrl() {
+    if (!previewUrl) return;
+    try {
+      await navigator.clipboard.writeText(previewUrl);
+      setCopiedPreview(true);
+      window.setTimeout(() => setCopiedPreview(false), 2000);
+    } catch {
+      /* ignore */
+    }
   }
 
   const previewLabel =
@@ -81,82 +158,126 @@ export default function ProjectPage() {
         : null;
 
   return (
-    <main className="container">
-      <div className="tabs">
-        <button
-          type="button"
-          className={`tab ${tab === "chat" ? "tab-active" : ""}`}
-          onClick={() => setTab("chat")}
-        >
-          {fa.chat}
-        </button>
-        <button
-          type="button"
-          className={`tab ${tab === "preview" ? "tab-active" : ""}`}
-          onClick={() => setTab("preview")}
-        >
-          {fa.preview}
-        </button>
-      </div>
+    <div className="project-shell">
+      <header className="project-header">
+        <div className="tabs">
+          <button
+            type="button"
+            className={`tab ${tab === "chat" ? "tab-active" : ""}`}
+            onClick={() => setTab("chat")}
+          >
+            {fa.chat}
+          </button>
+          <button
+            type="button"
+            className={`tab ${tab === "preview" ? "tab-active" : ""}`}
+            onClick={() => setTab("preview")}
+          >
+            {fa.preview}
+          </button>
+        </div>
+      </header>
+
+      <main className="project-main">
+        {tab === "chat" ? (
+          <section className="chat-thread" aria-label={fa.chat}>
+            {sandboxWarming && !busy ? (
+              <p className="sandbox-warm-banner" role="status">
+                {wakeInFlight ? fa.previewWaking : fa.sandboxWarming}
+                <span className="sandbox-warm-hint"> {fa.sandboxWarmingHint}</span>
+              </p>
+            ) : null}
+            <div className="chat-messages">
+              {messages.length === 0 ? (
+                <p className="chat-empty">{fa.chatEmpty}</p>
+              ) : null}
+              {messages.map((m) => (
+                <ChatMessage key={m.id} role={m.role} content={m.content} />
+              ))}
+              {busy && liveOutput ? (
+                <ChatMessage role="assistant" content={liveOutput} streaming />
+              ) : null}
+              {busy && runEvents.length > 0 ? (
+                <ActivityRail
+                  events={activityChips}
+                  open={activityOpen}
+                  onToggle={() => setActivityOpen((v) => !v)}
+                  endRef={activityEndRef}
+                />
+              ) : null}
+              <div ref={threadEndRef} className="thread-anchor" />
+            </div>
+          </section>
+        ) : previewUrl ? (
+          <section className="preview-pane">
+            {previewLabel ? <p className="preview-meta">{previewLabel}</p> : null}
+            {sandbox?.external_id ? (
+              <p className="preview-meta preview-meta-mono">{sandbox.external_id}</p>
+            ) : null}
+            <iframe
+              className="preview"
+              title="preview"
+              src={previewUrl}
+              sandbox="allow-scripts allow-same-origin"
+            />
+            <div className="preview-url-bar">
+              <a
+                className="preview-url-link"
+                href={previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={fa.previewOpenLink}
+              >
+                {previewUrl}
+              </a>
+              <button
+                type="button"
+                className="preview-url-copy"
+                onClick={() => void copyPreviewUrl()}
+                aria-label={copiedPreview ? fa.previewCopied : fa.previewCopyLink}
+                title={copiedPreview ? fa.previewCopied : fa.previewCopyLink}
+              >
+                {copiedPreview ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                    <path
+                      fill="currentColor"
+                      d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"
+                    />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                    <path
+                      fill="currentColor"
+                      d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+                    />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </section>
+        ) : (
+          <p className="preview-placeholder">
+            {previewWaking
+              ? fa.previewWaking
+              : busy
+                ? fa.previewPendingVercel
+                : fa.previewEmpty}
+          </p>
+        )}
+      </main>
 
       {tab === "chat" ? (
-        <section>
-          {messages.map((m) => (
-            <div key={m.id} className={`message ${m.role === "user" ? "message-user" : ""}`}>
-              {m.content}
-            </div>
-          ))}
-          {busy && runEvents.length > 0 ? (
-            <p className="activity-title">{fa.activity}</p>
-          ) : null}
-          {busy
-            ? runEvents.map((e) => (
-                <div key={e.seq} className="activity-line">
-                  {e.summary}
-                </div>
-              ))
-            : null}
-        </section>
-      ) : previewUrl ? (
-        <>
-          {previewLabel ? <p className="preview-meta">{previewLabel}</p> : null}
-          {sandbox?.external_id ? (
-            <p className="preview-meta preview-meta-mono">{sandbox.external_id}</p>
-          ) : null}
-          <iframe
-            className="preview"
-            title="preview"
-            src={previewUrl}
-            sandbox="allow-scripts allow-same-origin"
-          />
-        </>
-      ) : (
-        <p>{busy ? fa.previewPendingVercel : fa.previewEmpty}</p>
-      )}
-
-      <div className="composer">
-        <div className="composer-inner">
-          {busy ? (
-            <button type="button" className="btn btn-secondary" onClick={stop}>
-              {fa.stop}
-            </button>
-          ) : (
-            <>
-              <textarea
-                className="input"
-                rows={2}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="پیام خود را بنویسید…"
-              />
-              <button type="button" className="btn" onClick={send}>
-                {fa.send}
-              </button>
-            </>
-          )}
-          {busy ? <span>{activeStatus === "queued" ? fa.waiting : fa.running}</span> : null}
-        </div>
-      </div>
-    </main>
+        <Composer
+          text={text}
+          busy={busy}
+          warming={sandboxWarming}
+          activeStatus={activeStatus}
+          modelLabel={modelLabel}
+          onTextChange={setText}
+          onSend={send}
+          onStop={stop}
+        />
+      ) : null}
+    </div>
   );
 }

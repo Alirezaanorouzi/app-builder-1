@@ -5,12 +5,17 @@ import os
 os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
 os.environ.setdefault("LITELLM_LOG", "ERROR")
 
+from worker.liara_env import apply_liara_worker_env  # noqa: E402
+
+apply_liara_worker_env()
+
 import logging
 import signal
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -25,7 +30,15 @@ from worker.config import Settings  # noqa: E402
 from worker.db import Database  # noqa: E402
 from worker.logging_config import configure_worker_logging  # noqa: E402
 from worker.openhands_runner import run_agent_turn  # noqa: E402
+from worker.run_timeline import RunTimeline, prewarm_openhands_sdk  # noqa: E402
+from worker.preview_wake import execute_preview_wake  # noqa: E402
+from worker.remote_control import (  # noqa: E402
+    fail_stale_runs_with_remote_teardown,
+    fail_worker_runs_on_startup_with_remote_teardown,
+    stop_remote_run,
+)
 from worker.workspace.factory import build_workspace  # noqa: E402
+from worker.workspace.vercel_names import vercel_sandbox_display_name  # noqa: E402
 from worker.workspace.vercel_ws import VercelWorkspace  # noqa: E402
 
 configure_worker_logging()
@@ -45,21 +58,39 @@ class Worker:
         self._pool = ThreadPoolExecutor(max_workers=self.settings.worker_concurrency)
 
     def start(self) -> None:
-        self.db.fail_worker_runs_on_startup(self.worker_id)
+        fail_worker_runs_on_startup_with_remote_teardown(self.settings, self.db, self.worker_id)
         Path(self.settings.conversation_dir).mkdir(parents=True, exist_ok=True)
+        if self.settings.liara_api_key:
+            threading.Thread(
+                target=prewarm_openhands_sdk,
+                name="openhands-prewarm",
+                daemon=True,
+            ).start()
         logger.info("Worker %s started (concurrency=%s)", self.worker_id, self.settings.worker_concurrency)
 
         while not self._shutdown.is_set():
             try:
-                self.db.fail_stale_runs(self.worker_id)
+                fail_stale_runs_with_remote_teardown(self.settings, self.db)
                 self._idle_sandbox_sweep()
                 active = sum(1 for _ in self._active)
                 slots = max(0, self.settings.worker_concurrency - active)
+                claimed: list[dict] = []
                 if slots > 0:
                     claimed = self.db.claim_runs(self.worker_id, slots)
                     for row in claimed:
                         self._active[uuid.UUID(str(row["id"]))] = threading.Event()
                         self._pool.submit(self._execute_run, row)
+                        slots -= 1
+                busy_projects = {uuid.UUID(str(r["project_id"])) for r in claimed}
+                if slots > 0:
+                    wake_limit = min(2, slots)
+                    for row in self.db.claim_wake_jobs(self.worker_id, wake_limit):
+                        pid = uuid.UUID(str(row["project_id"]))
+                        if pid in busy_projects or self.db.project_has_active_run(pid):
+                            self.db.release_sandbox_wake(uuid.UUID(str(row["id"])))
+                            continue
+                        busy_projects.add(pid)
+                        self._pool.submit(self._execute_wake, row)
             except Exception:
                 logger.exception("claim loop error")
             self._shutdown.wait(self.settings.poll_seconds)
@@ -69,6 +100,12 @@ class Worker:
             ev.set()
         self._pool.shutdown(wait=True, cancel_futures=False)
         self.db.close()
+
+    def _execute_wake(self, row: dict) -> None:
+        try:
+            execute_preview_wake(self.settings, self.db, row)
+        except Exception:
+            logger.exception("preview wake job failed")
 
     def _idle_sandbox_sweep(self) -> None:
         if self.settings.sandbox_provider != "vercel":
@@ -82,14 +119,28 @@ class Worker:
         run_id = uuid.UUID(str(row["id"]))
         project_id = uuid.UUID(str(row["project_id"]))
         stop = self._active.get(run_id)
+        hb_stop = threading.Event()
+
+        def _heartbeat_loop() -> None:
+            while not hb_stop.wait(20):
+                self.db.touch_heartbeat(run_id)
+
+        hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"hb-{run_id}")
+        hb_thread.start()
+        timeline = RunTimeline(run_id)
+        timeline.mark("run_claimed")
         try:
             ws = build_workspace(self.settings, str(project_id))
+            timeline.mark("workspace_ready")
             ws.ensure(str(project_id), row.get("template_id") or "vite-react")
             provider = self.settings.sandbox_provider
+            sandbox_label = vercel_sandbox_display_name(
+                self.settings.deploy_env, str(project_id)
+            )
             preview = None if provider == "vercel" else ws.preview_url()
             self.db.upsert_sandbox(
                 project_id,
-                name=f"{self.settings.deploy_env}:{project_id}",
+                name=sandbox_label,
                 provider=provider,
                 status="running",
                 preview_url=preview,
@@ -100,10 +151,74 @@ class Worker:
                 return self.db.is_cancel_requested(run_id) or (stop and stop.is_set())
 
             if cancel_check():
+                stop_remote_run(self.settings, self.db, row, reason="cancelled")
                 self.db.finish_run(run_id, "cancelled")
                 return
 
-            ws.extend_session()
+            staging_sync: Callable[[], None] | None = None
+            if isinstance(ws, VercelWorkspace):
+                sb_row = self.db.get_sandbox_row(project_id)
+                if sb_row:
+                    ws.apply_persisted_agent_state(
+                        session_api_key=sb_row.get("agent_session_api_key"),
+                        agent_server_url=sb_row.get("agent_server_url"),
+                    )
+
+                def _preview_warm() -> None:
+                    try:
+                        url = ws.warm_preview_url()
+                        if url:
+                            self.db.upsert_sandbox(
+                                project_id,
+                                name=ws.display_name,
+                                provider="vercel",
+                                status="running",
+                                preview_url=url,
+                                external_id=ws.external_sandbox_id(),
+                            )
+                    except Exception:
+                        logger.exception("Vercel preview warm failed for %s", project_id)
+
+                threading.Thread(
+                    target=_preview_warm,
+                    name=f"preview-{project_id}",
+                    daemon=True,
+                ).start()
+                ws.extend_session(fast=True)
+                timeline.mark("sandbox_vite_bootstrap")
+                if self.settings.uses_remote_agent():
+                    try:
+                        ws.ensure_remote_agent_server()
+                        timeline.mark("agent_server_ready")
+                    except Exception:
+                        logger.exception("Vercel agent server bootstrap failed for %s", project_id)
+                if ws.preview_url():
+                    self.db.upsert_sandbox(
+                        project_id,
+                        name=ws.display_name,
+                        provider="vercel",
+                        status="running",
+                        preview_url=ws.preview_url(),
+                        external_id=ws.external_sandbox_id(),
+                    )
+                if not self.settings.uses_remote_agent():
+                    staging_sync = ws.request_staging_sync
+                agent_url = ws.agent_server_url() if self.settings.uses_remote_agent() else None
+                session = ws.project_session
+                if agent_url and session:
+                    self.db.upsert_sandbox(
+                        project_id,
+                        name=ws.display_name,
+                        provider="vercel",
+                        status="running",
+                        preview_url=ws.preview_url(),
+                        external_id=ws.external_sandbox_id(),
+                        agent_server_url=agent_url,
+                        agent_session_api_key=session.session_api_key,
+                        agent_server_status=session.agent_server_status(),
+                    )
+            else:
+                ws.extend_session()
 
             status, iterations = run_agent_turn(
                 self.settings,
@@ -112,18 +227,30 @@ class Worker:
                 row,
                 ws,
                 cancel_check=cancel_check,
+                on_staging_sync=staging_sync,
+                timeline=timeline,
             )
             if cancel_check():
                 status = "cancelled"
             elif status not in ("failed", "cancelled") and isinstance(ws, VercelWorkspace):
                 preview, ext_id = ws.publish_to_vercel()
+                err = ws.vercel_last_error()
                 if preview:
                     self.db.upsert_sandbox(
                         project_id,
-                        name=f"{self.settings.deploy_env}:{project_id}",
+                        name=ws.display_name,
                         provider="vercel",
                         status="running",
                         preview_url=preview,
+                        external_id=ext_id,
+                    )
+                elif err:
+                    self.db.upsert_sandbox(
+                        project_id,
+                        name=ws.display_name,
+                        provider="vercel",
+                        status="failed",
+                        preview_url=None,
                         external_id=ext_id,
                     )
             elif self.settings.sandbox_provider == "local":
@@ -131,11 +258,12 @@ class Worker:
                 if preview:
                     self.db.upsert_sandbox(
                         project_id,
-                        name=f"{self.settings.deploy_env}:{project_id}",
+                        name=sandbox_label,
                         provider="local",
                         status="running",
                         preview_url=preview,
                     )
+            timeline.mark("run_finished")
             self.db.finish_run(run_id, status, iterations=iterations)
             self.db.touch_sandbox_activity(project_id)
         except Exception as e:
@@ -148,6 +276,7 @@ class Worker:
             )
             self.db.finish_run(run_id, "failed", error=str(e))
         finally:
+            hb_stop.set()
             self._active.pop(run_id, None)
 
 

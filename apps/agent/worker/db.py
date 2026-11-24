@@ -65,7 +65,7 @@ class Database:
                 (datetime.now(timezone.utc), run_id),
             )
 
-    def fail_stale_runs(self, worker_id: str, older_than_seconds: int = 45) -> None:
+    def fail_stale_runs(self, worker_id: str, older_than_seconds: int = 180) -> None:
         with self.conn() as c:
             c.execute(
                 """
@@ -79,14 +79,15 @@ class Database:
             )
 
     def fail_worker_runs_on_startup(self, worker_id: str) -> None:
+        """Mark any in-flight runs failed when a new worker process starts (orphan cleanup)."""
+        del worker_id  # kept for call-site compatibility
         with self.conn() as c:
             c.execute(
                 """
                 UPDATE agent_runs
                 SET status = 'failed', finished_at = now(), error_message = 'worker restarted'
-                WHERE status = 'running' AND worker_id = %s
+                WHERE status = 'running'
                 """,
-                (worker_id,),
             )
 
     def finish_run(
@@ -100,10 +101,31 @@ class Database:
             c.execute(
                 """
                 UPDATE agent_runs
-                SET status = %s, finished_at = %s, error_message = %s, iteration_count = %s
+                SET status = %s, finished_at = %s, error_message = %s, iteration_count = %s,
+                    live_output = NULL
                 WHERE id = %s
                 """,
                 (status, datetime.now(timezone.utc), error, iterations, run_id),
+            )
+
+    def clear_run_live_output(self, run_id: uuid.UUID) -> None:
+        with self.conn() as c:
+            c.execute(
+                "UPDATE agent_runs SET live_output = NULL WHERE id = %s",
+                (run_id,),
+            )
+
+    def append_run_live_output(self, run_id: uuid.UUID, text: str) -> None:
+        if not text:
+            return
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE agent_runs
+                SET live_output = COALESCE(live_output, '') || %s
+                WHERE id = %s
+                """,
+                (text, run_id),
             )
 
     def requeue_run(self, run_id: uuid.UUID) -> None:
@@ -226,6 +248,9 @@ class Database:
         status: str,
         preview_url: str | None = None,
         external_id: str | None = None,
+        agent_server_url: str | None = None,
+        agent_session_api_key: str | None = None,
+        agent_server_status: str | None = None,
     ) -> uuid.UUID:
         with self.conn() as c:
             row = c.execute(
@@ -238,21 +263,48 @@ class Database:
                     UPDATE sandboxes SET name = %s, provider = %s, status = %s,
                       preview_url = COALESCE(%s, preview_url),
                       external_id = COALESCE(%s, external_id),
+                      agent_server_url = COALESCE(%s, agent_server_url),
+                      agent_session_api_key = COALESCE(%s, agent_session_api_key),
+                      agent_server_status = COALESCE(%s, agent_server_status),
                       last_active_at = %s, updated_at = %s
                     WHERE project_id = %s
                     RETURNING id
                     """,
-                    (name, provider, status, preview_url, external_id, now, now, project_id),
+                    (
+                        name,
+                        provider,
+                        status,
+                        preview_url,
+                        external_id,
+                        agent_server_url,
+                        agent_session_api_key,
+                        agent_server_status,
+                        now,
+                        now,
+                        project_id,
+                    ),
                 )
             else:
                 c.execute(
                     """
                     INSERT INTO sandboxes
-                      (project_id, name, provider, status, preview_url, external_id, last_active_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                      (project_id, name, provider, status, preview_url, external_id,
+                       agent_server_url, agent_session_api_key, agent_server_status, last_active_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
-                    (project_id, name, provider, status, preview_url, external_id, now),
+                    (
+                        project_id,
+                        name,
+                        provider,
+                        status,
+                        preview_url,
+                        external_id,
+                        agent_server_url,
+                        agent_session_api_key,
+                        agent_server_status,
+                        now,
+                    ),
                 )
             return c.execute(
                 "SELECT id FROM sandboxes WHERE project_id = %s", (project_id,)
@@ -277,6 +329,11 @@ class Database:
                     SELECT 1 FROM agent_runs ar
                     WHERE ar.project_id = s.project_id
                       AND ar.status IN ('queued', 'running')
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM sandbox_wake_requests wr
+                    WHERE wr.project_id = s.project_id
+                      AND wr.status IN ('queued', 'running')
                   )
                 """,
                 (str(idle_seconds),),
@@ -322,3 +379,157 @@ class Database:
                 (run_id,),
             ).fetchone()
             return row["content"] if row else None
+
+    def get_project_conversation_id(self, project_id: uuid.UUID) -> uuid.UUID | None:
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT conversation_id FROM projects WHERE id = %s",
+                (project_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return uuid.UUID(str(row["conversation_id"]))
+
+    def set_run_llm_proxy_key_id(self, run_id: uuid.UUID, key_id: str) -> None:
+        with self.conn() as c:
+            c.execute(
+                "UPDATE agent_runs SET llm_proxy_key_id = %s WHERE id = %s",
+                (key_id, run_id),
+            )
+
+    def mark_remote_stopped(self, run_id: uuid.UUID) -> None:
+        with self.conn() as c:
+            c.execute(
+                "UPDATE agent_runs SET remote_stopped_at = now() WHERE id = %s",
+                (run_id,),
+            )
+
+    def fail_run(self, run_id: uuid.UUID, error_message: str) -> None:
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE agent_runs
+                SET status = 'failed', finished_at = now(), error_message = %s
+                WHERE id = %s AND status = 'running'
+                """,
+                (error_message, run_id),
+            )
+
+    def list_running_runs(self) -> list[dict[str, Any]]:
+        with self.conn() as c:
+            return c.execute(
+                """
+                SELECT ar.*, p.conversation_id
+                FROM agent_runs ar
+                JOIN projects p ON p.id = ar.project_id
+                WHERE ar.status = 'running'
+                """
+            ).fetchall()
+
+    def list_stale_running_runs(self, older_than_seconds: int) -> list[dict[str, Any]]:
+        with self.conn() as c:
+            return c.execute(
+                """
+                SELECT ar.*, p.conversation_id
+                FROM agent_runs ar
+                JOIN projects p ON p.id = ar.project_id
+                WHERE ar.status = 'running'
+                  AND ar.heartbeat_at < now() - (%s || ' seconds')::interval
+                """,
+                (str(older_than_seconds),),
+            ).fetchall()
+
+    def enqueue_sandbox_wake(self, project_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID:
+        with self.conn() as c:
+            row = c.execute(
+                """
+                INSERT INTO sandbox_wake_requests (project_id, user_id, status)
+                VALUES (%s, %s, 'queued')
+                RETURNING id
+                """,
+                (project_id, user_id),
+            ).fetchone()
+            return uuid.UUID(str(row["id"]))
+
+    def get_active_sandbox_wake(self, project_id: uuid.UUID) -> dict[str, Any] | None:
+        with self.conn() as c:
+            return c.execute(
+                """
+                SELECT * FROM sandbox_wake_requests
+                WHERE project_id = %s AND status IN ('queued', 'running')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+
+    def project_has_active_run(self, project_id: uuid.UUID) -> bool:
+        with self.conn() as c:
+            row = c.execute(
+                """
+                SELECT 1 FROM agent_runs
+                WHERE project_id = %s AND status = 'running'
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            return row is not None
+
+    def release_sandbox_wake(self, wake_id: uuid.UUID) -> None:
+        """Return a claimed wake job to the queue (e.g. project already running an agent)."""
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE sandbox_wake_requests
+                SET status = 'queued', worker_id = NULL, started_at = NULL
+                WHERE id = %s AND status = 'running'
+                """,
+                (wake_id,),
+            )
+
+    def claim_wake_jobs(self, worker_id: str, limit: int) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        with self.conn() as c:
+            with c.transaction():
+                rows = c.execute(
+                    """
+                    SELECT wr.*
+                    FROM sandbox_wake_requests wr
+                    WHERE wr.status = 'queued'
+                    ORDER BY wr.created_at
+                    LIMIT %s
+                    FOR UPDATE OF wr SKIP LOCKED
+                    """,
+                    (limit,),
+                ).fetchall()
+                claimed = []
+                now = datetime.now(timezone.utc)
+                for row in rows:
+                    c.execute(
+                        """
+                        UPDATE sandbox_wake_requests
+                        SET status = 'running', worker_id = %s, started_at = %s
+                        WHERE id = %s
+                        """,
+                        (worker_id, now, row["id"]),
+                    )
+                    claimed.append(dict(row))
+                return claimed
+
+    def finish_sandbox_wake(
+        self,
+        wake_id: uuid.UUID,
+        status: str,
+        *,
+        error: str | None = None,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE sandbox_wake_requests
+                SET status = %s, finished_at = %s, error_message = %s
+                WHERE id = %s
+                """,
+                (status, datetime.now(timezone.utc), error, wake_id),
+            )
