@@ -32,6 +32,7 @@ from worker.logging_config import configure_worker_logging  # noqa: E402
 from worker.openhands_runner import run_agent_turn  # noqa: E402
 from worker.run_timeline import RunTimeline, prewarm_openhands_sdk  # noqa: E402
 from worker.preview_wake import execute_preview_wake  # noqa: E402
+from worker.sandbox_stack import ensure_vercel_remote_stack, persist_vercel_stack  # noqa: E402
 from worker.remote_control import (  # noqa: E402
     fail_stale_runs_with_remote_teardown,
     fail_worker_runs_on_startup_with_remote_teardown,
@@ -86,7 +87,7 @@ class Worker:
                     wake_limit = min(2, slots)
                     for row in self.db.claim_wake_jobs(self.worker_id, wake_limit):
                         pid = uuid.UUID(str(row["project_id"]))
-                        if pid in busy_projects or self.db.project_has_active_run(pid):
+                        if pid in busy_projects:
                             self.db.release_sandbox_wake(uuid.UUID(str(row["id"])))
                             continue
                         busy_projects.add(pid)
@@ -157,66 +158,22 @@ class Worker:
 
             staging_sync: Callable[[], None] | None = None
             if isinstance(ws, VercelWorkspace):
-                sb_row = self.db.get_sandbox_row(project_id)
-                if sb_row:
-                    ws.apply_persisted_agent_state(
-                        session_api_key=sb_row.get("agent_session_api_key"),
-                        agent_server_url=sb_row.get("agent_server_url"),
-                    )
-
-                def _preview_warm() -> None:
-                    try:
-                        url = ws.warm_preview_url()
-                        if url:
-                            self.db.upsert_sandbox(
-                                project_id,
-                                name=ws.display_name,
-                                provider="vercel",
-                                status="running",
-                                preview_url=url,
-                                external_id=ws.external_sandbox_id(),
-                            )
-                    except Exception:
-                        logger.exception("Vercel preview warm failed for %s", project_id)
-
-                threading.Thread(
-                    target=_preview_warm,
-                    name=f"preview-{project_id}",
-                    daemon=True,
-                ).start()
-                ws.extend_session(fast=True)
-                timeline.mark("sandbox_vite_bootstrap")
-                if self.settings.uses_remote_agent():
-                    try:
-                        ws.ensure_remote_agent_server()
-                        timeline.mark("agent_server_ready")
-                    except Exception:
-                        logger.exception("Vercel agent server bootstrap failed for %s", project_id)
-                if ws.preview_url():
-                    self.db.upsert_sandbox(
+                remote = self.settings.uses_remote_agent()
+                try:
+                    stack = ensure_vercel_remote_stack(
+                        self.db,
+                        ws,
                         project_id,
-                        name=ws.display_name,
-                        provider="vercel",
-                        status="running",
-                        preview_url=ws.preview_url(),
-                        external_id=ws.external_sandbox_id(),
+                        remote_agent=remote,
+                        timeline=timeline,
                     )
-                if not self.settings.uses_remote_agent():
+                    persist_vercel_stack(self.db, project_id, ws, stack)
+                    timeline.mark("sandbox_vite_bootstrap")
+                except Exception:
+                    logger.exception("Vercel stack ensure failed for %s", project_id)
+                    raise
+                if not remote:
                     staging_sync = ws.request_staging_sync
-                agent_url = ws.agent_server_url() if self.settings.uses_remote_agent() else None
-                session = ws.project_session
-                if agent_url and session:
-                    self.db.upsert_sandbox(
-                        project_id,
-                        name=ws.display_name,
-                        provider="vercel",
-                        status="running",
-                        preview_url=ws.preview_url(),
-                        external_id=ws.external_sandbox_id(),
-                        agent_server_url=agent_url,
-                        agent_session_api_key=session.session_api_key,
-                        agent_server_status=session.agent_server_status(),
-                    )
             else:
                 ws.extend_session()
 

@@ -157,6 +157,11 @@ class VercelProjectSession:
         if url:
             self._agent_url = url.rstrip("/")
 
+    def adopt_warm_agent(self, agent_url: str, *, status: str = "ready") -> None:
+        """Trust a live Agent Server after an HTTP /ready check (skip VM ensure)."""
+        self._agent_url = agent_url.rstrip("/")
+        self._agent_status = status
+
     def _open(self) -> VercelSandboxSession | None:
         if not self.settings.vercel_token or not self.settings.vercel_team_id:
             return None
@@ -223,8 +228,12 @@ class VercelProjectSession:
             self._agent_status = "failed"
             return None, self._agent_status
         if session._sandbox is None:  # noqa: SLF001
-            logger.info("Sandbox not connected yet; connecting before Agent Server ensure")
-            self.extend_preview(fast=True)
+            logger.info(
+                "Sandbox not connected yet; resuming VM for Agent Server (no Vite bootstrap)"
+            )
+            if not session._connect():
+                self._agent_status = "failed"
+                return None, self._agent_status
         if session._sandbox is None:  # noqa: SLF001
             self._agent_status = "failed"
             return None, self._agent_status

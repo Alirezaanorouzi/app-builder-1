@@ -185,6 +185,32 @@ a {
   opacity: 0.85;
 }
 
+.thinking-loader {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0.35rem 0 1rem;
+  padding: 0.25rem 0;
+  color: #a1a1aa;
+  font-size: 0.9rem;
+}
+
+.thinking-loader-mark {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 2px solid #3f3f46;
+  border-top-color: #a78bfa;
+  border-radius: 50%;
+  animation: thinking-spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes thinking-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes stream-caret {
   50% {
     opacity: 0;

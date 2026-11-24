@@ -4,7 +4,7 @@
 #   3) Worker: cd apps\agent; $env:PYTHONPATH='.'; python -m worker
 #
 # Before first run: .\scripts\apply-migrations.ps1
-# Phase 0: cd apps\agent; python scripts/phase0_llm_egress.py; python scripts/phase0_spike_agent_server.py
+# Tests: cd apps\agent; $env:PYTHONPATH='.'; python -m pytest tests -q
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)

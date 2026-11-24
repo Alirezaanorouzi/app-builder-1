@@ -10,6 +10,7 @@ type Props = {
   onTextChange: (v: string) => void;
   onSend: () => void;
   onStop: () => void;
+  onRequestWake?: () => void;
 };
 
 export function Composer({
@@ -21,8 +22,15 @@ export function Composer({
   onTextChange,
   onSend,
   onStop,
+  onRequestWake,
 }: Props) {
   const blocked = busy || warming;
+  const busyLine =
+    activeStatus === "queued" || activeStatus == null ? fa.waiting : fa.running;
+
+  function onComposerFocus() {
+    if (!blocked) onRequestWake?.();
+  }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -35,8 +43,8 @@ export function Composer({
     <div className="composer-shell" role="region" aria-label={fa.chat}>
       <div className="composer-card">
         {busy ? (
-          <p className="composer-busy-line">
-            {activeStatus === "queued" ? fa.waiting : fa.running}
+          <p className="composer-busy-line" role="status" aria-live="polite">
+            {busyLine}
           </p>
         ) : warming ? (
           <p className="composer-busy-line">{fa.sandboxWarmingComposer}</p>
@@ -46,6 +54,7 @@ export function Composer({
             rows={1}
             value={text}
             onChange={(e) => onTextChange(e.target.value)}
+            onFocus={onComposerFocus}
             onKeyDown={onKeyDown}
             placeholder={fa.composerPlaceholder}
             aria-label={fa.composerPlaceholder}

@@ -1,7 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { needsSandboxStackWake, type SandboxWakeSnapshot } from "@/lib/sandbox-wake";
 
 const MIN_WAKE_INTERVAL_MS = 30_000;
+
+export type SandboxWakeControls = {
+  /** POST /sandbox/wake when the stack is not ready (throttled). */
+  requestWake: () => void;
+};
 
 /**
  * Enqueue sandbox wake when the project needs Vite + Agent Server (Vercel remote).
@@ -12,10 +17,10 @@ export function useSandboxWake(
   sandbox: SandboxWakeSnapshot,
   previewUrl: string | null,
   options: { busy: boolean; wakeInFlight: boolean },
-): void {
+): SandboxWakeControls {
   const lastWakeAt = useRef(0);
 
-  useEffect(() => {
+  const requestWake = useCallback(() => {
     if (!needsSandboxStackWake(sandbox, previewUrl, options)) return;
     const now = Date.now();
     if (now - lastWakeAt.current < MIN_WAKE_INTERVAL_MS) return;
@@ -24,4 +29,10 @@ export function useSandboxWake(
       lastWakeAt.current = 0;
     });
   }, [projectId, sandbox, previewUrl, options.busy, options.wakeInFlight]);
+
+  useEffect(() => {
+    requestWake();
+  }, [requestWake]);
+
+  return { requestWake };
 }

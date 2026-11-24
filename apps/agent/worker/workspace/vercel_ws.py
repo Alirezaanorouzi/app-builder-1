@@ -75,6 +75,25 @@ class VercelWorkspace(WorkspaceAdapter):
             if agent_server_url:
                 self._session.seed_agent_url_hint(agent_server_url)
 
+    def attach_from_sandbox_row(self, sb_row: dict) -> None:
+        """Wire workspace from DB after a live /ready check (no Vercel reconnect)."""
+        self.apply_persisted_agent_state(
+            session_api_key=sb_row.get("agent_session_api_key"),
+            agent_server_url=sb_row.get("agent_server_url"),
+        )
+        preview = sb_row.get("preview_url")
+        if preview:
+            self._preview = str(preview)
+        external_id = sb_row.get("external_id")
+        if external_id:
+            self._external_id = str(external_id)
+        agent_url = sb_row.get("agent_server_url")
+        if agent_url:
+            self._agent_url = str(agent_url).rstrip("/")
+        session = self._open_session()
+        if session is not None and self._agent_url:
+            session.adopt_warm_agent(self._agent_url, status="ready")
+
     @property
     def project_session(self) -> VercelProjectSession | None:
         return self._session

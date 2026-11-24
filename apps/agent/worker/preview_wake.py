@@ -1,4 +1,4 @@
-"""Resume Vercel sandbox + Vite for preview only (no agent / LLM)."""
+"""Resume Vercel sandbox + Vite (+ Agent Server when remote)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import uuid
 
 from worker.config import Settings
 from worker.db import Database
+from worker.sandbox_stack import ensure_vercel_remote_stack, persist_vercel_stack
 from worker.workspace.factory import build_workspace
 from worker.workspace.local import LocalWorkspace
 from worker.workspace.vercel_names import vercel_sandbox_display_name
@@ -31,32 +32,29 @@ def execute_preview_wake(
         external_id: str | None = None
         provider = settings.sandbox_provider
 
-        agent_url: str | None = None
-        agent_status: str | None = None
-        session_api_key: str | None = None
         if isinstance(ws, VercelWorkspace):
-            preview, external_id = ws.wake_preview_only()
-            if settings.uses_remote_agent():
-                sb_row = db.get_sandbox_row(project_id)
-                if sb_row:
-                    ws.apply_persisted_agent_state(
-                        session_api_key=sb_row.get("agent_session_api_key"),
-                        agent_server_url=sb_row.get("agent_server_url"),
-                    )
-                try:
-                    agent_url, agent_status = ws.ensure_remote_agent_server()
-                    session = ws.project_session
-                    if agent_url and session:
-                        session_api_key = session.session_api_key
-                        logger.info(
-                            "Preview wake also warmed Agent Server for %s (%s)",
-                            project_id,
-                            agent_status,
-                        )
-                except Exception:
-                    logger.exception("Agent Server prewarm during preview wake failed for %s", project_id)
+            remote = settings.uses_remote_agent()
+            stack = ensure_vercel_remote_stack(
+                db,
+                ws,
+                project_id,
+                remote_agent=remote,
+                wait_wake_sec=0.0,
+            )
+            persist_vercel_stack(db, project_id, ws, stack)
+            preview = stack.preview_url
+            external_id = stack.external_id
             provider = "vercel"
-        elif isinstance(ws, LocalWorkspace):
+            db.finish_sandbox_wake(wake_id, "succeeded")
+            logger.info(
+                "Preview wake succeeded for %s: %s (reused=%s)",
+                project_id,
+                preview,
+                stack.reused_warm_stack,
+            )
+            return
+
+        if isinstance(ws, LocalWorkspace):
             ws.extend_session()
             preview = ws.preview_url()
             provider = "local"
@@ -71,9 +69,6 @@ def execute_preview_wake(
                 status="running",
                 preview_url=preview,
                 external_id=external_id,
-                agent_server_url=agent_url,
-                agent_session_api_key=session_api_key,
-                agent_server_status=agent_status,
             )
             db.finish_sandbox_wake(wake_id, "succeeded")
             logger.info("Preview wake succeeded for %s: %s", project_id, preview)
@@ -86,13 +81,8 @@ def execute_preview_wake(
                 preview_url=None,
                 external_id=external_id,
             )
-            err = "preview URL not available after wake"
-            if isinstance(ws, VercelWorkspace):
-                last = ws.vercel_last_error()
-                if last:
-                    err = last
-            db.finish_sandbox_wake(wake_id, "failed", error=err[:500])
-            logger.warning("Preview wake failed for %s: %s", project_id, err)
+            db.finish_sandbox_wake(wake_id, "failed", error="preview URL not available after wake")
+            logger.warning("Preview wake failed for %s", project_id)
     except Exception as e:
         logger.exception("Preview wake error for %s", project_id)
         db.finish_sandbox_wake(wake_id, "failed", error=str(e)[:500])

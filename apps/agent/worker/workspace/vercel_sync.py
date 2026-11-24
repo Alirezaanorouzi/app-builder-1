@@ -429,10 +429,17 @@ class VercelSandboxSession:
             assert self._client is not None
             if start_dev:
                 if not self._dev_bootstrapped:
-                    if not _bootstrap_dev_server(self._sandbox):
+                    if _wait_vite_http(self._sandbox, timeout_sec=4.0):
+                        self._dev_bootstrapped = True
+                        logger.info(
+                            "Vercel sandbox %s: Vite already up (skip bootstrap)",
+                            self.api_name,
+                        )
+                    elif not _bootstrap_dev_server(self._sandbox):
                         self._last_error = "npm install or vite start failed"
                         return None, None
-                    self._dev_bootstrapped = True
+                    else:
+                        self._dev_bootstrapped = True
                     time.sleep(0.5)
                 if http_wait_seconds > 0:
                     url, self._sandbox = wait_for_preview_url(

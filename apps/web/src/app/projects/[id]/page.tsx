@@ -5,7 +5,10 @@ import { useParams } from "next/navigation";
 import { ActivityRail } from "@/components/ActivityRail";
 import { ChatMessage } from "@/components/ChatMessage";
 import { Composer } from "@/components/Composer";
+import { ThinkingLoader } from "@/components/ThinkingLoader";
 import { fa } from "@/lib/dict";
+import { isActivityChipEvent } from "@/lib/run-events";
+import { shouldHideThinkingLoader, THINKING_DELAY_MS } from "@/lib/run-thinking";
 import { useSandboxWake } from "@/hooks/useSandboxWake";
 import { isSandboxStackReady, usesVercelRemoteStack } from "@/lib/sandbox-wake";
 
@@ -48,6 +51,8 @@ export default function ProjectPage() {
   const [previewWaking, setPreviewWaking] = useState(false);
   const [sendPending, setSendPending] = useState(false);
   const [liveOutput, setLiveOutput] = useState<string | null>(null);
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [thinkingVisible, setThinkingVisible] = useState(false);
   const activityEndRef = useRef<HTMLDivElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const model =
@@ -92,10 +97,10 @@ export default function ProjectPage() {
 
   const busy =
     sendPending || activeStatus === "queued" || activeStatus === "running";
-  const activityChips = runEvents.slice(-14);
+  const activityChips = runEvents.filter(isActivityChipEvent).slice(-14);
   const wakeInFlight = previewWaking;
 
-  useSandboxWake(id, sandbox, previewUrl, { busy, wakeInFlight });
+  const { requestWake } = useSandboxWake(id, sandbox, previewUrl, { busy, wakeInFlight });
 
   const stackReady = isSandboxStackReady(sandbox, previewUrl, wakeInFlight);
   const sandboxWarming = usesVercelRemoteStack(sandbox) && !stackReady;
@@ -107,7 +112,30 @@ export default function ProjectPage() {
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, liveOutput]);
+  }, [messages.length, liveOutput, thinkingVisible]);
+
+  useEffect(() => {
+    if (!busy) {
+      setRunStartedAt(null);
+      setThinkingVisible(false);
+      return;
+    }
+    if (runStartedAt == null) return;
+    if (shouldHideThinkingLoader(runEvents, liveOutput)) {
+      setThinkingVisible(false);
+      return;
+    }
+    const elapsed = Date.now() - runStartedAt;
+    if (elapsed >= THINKING_DELAY_MS) {
+      setThinkingVisible(true);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setThinkingVisible(true),
+      THINKING_DELAY_MS - elapsed,
+    );
+    return () => window.clearTimeout(timer);
+  }, [busy, runStartedAt, runEvents, liveOutput]);
 
   async function send() {
     const content = text.trim();
@@ -117,6 +145,8 @@ export default function ProjectPage() {
     setActiveStatus("queued");
     setMessages((prev) => [...prev, { id: optimisticId, role: "user", content }]);
     setText("");
+    setRunStartedAt(Date.now());
+    setThinkingVisible(false);
     try {
       const res = await fetch(`/api/projects/${id}/runs`, {
         method: "POST",
@@ -127,6 +157,7 @@ export default function ProjectPage() {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
         setActiveStatus(null);
+        setRunStartedAt(null);
         alert(body.error ?? "ارسال ناموفق بود");
         return;
       }
@@ -194,6 +225,7 @@ export default function ProjectPage() {
               {messages.map((m) => (
                 <ChatMessage key={m.id} role={m.role} content={m.content} />
               ))}
+              <ThinkingLoader visible={thinkingVisible} />
               {busy && liveOutput ? (
                 <ChatMessage role="assistant" content={liveOutput} streaming />
               ) : null}
@@ -276,6 +308,7 @@ export default function ProjectPage() {
           onTextChange={setText}
           onSend={send}
           onStop={stop}
+          onRequestWake={requestWake}
         />
       ) : null}
     </div>

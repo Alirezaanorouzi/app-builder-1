@@ -226,18 +226,22 @@ def run_agent_turn(
     stream_appender = RunLiveStreamAppender(db, run_id)
     event_seq_holder = {"n": db.next_event_seq(run_id)}
     assistant_chunks: list[str] = []
+    agent_run_armed = threading.Event()
 
     def on_event(event: Any) -> None:
         if cancel_check():
             return
+        if not agent_run_armed.is_set():
+            return
         db.touch_heartbeat(run_id)
         payload = event.model_dump() if hasattr(event, "model_dump") else {"raw": str(event)}
         safe = sanitize_event_payload(payload, settings.run_event_max_bytes)
+        cls = type(event).__name__
         try:
             db.insert_run_event(
                 run_id,
                 event_seq_holder["n"],
-                type(event).__name__,
+                cls,
                 safe,
                 tool_name=getattr(event, "tool_name", None),
             )
@@ -245,8 +249,14 @@ def run_agent_turn(
         except Exception:
             logger.exception("run_event insert failed (seq=%s)", event_seq_holder["n"])
             event_seq_holder["n"] += 1
-        if type(event).__name__ not in ("RunBootstrapEvent", "RunTimelineEvent"):
-            timeline.mark("first_run_event", once=True)
+        if cls not in ("RunBootstrapEvent", "RunTimelineEvent"):
+            if not timeline.has_phase("first_agent_event"):
+                logger.info(
+                    "RUN_TIMELINE run=%s first_agent_event_class=%s",
+                    run_id,
+                    cls,
+                )
+            timeline.mark("first_agent_event", once=True)
         if on_staging_sync and not use_remote:
             cls = type(event).__name__
             tool = getattr(event, "tool_name", None)
@@ -255,7 +265,7 @@ def run_agent_turn(
                     on_staging_sync()
                 except Exception:
                     logger.exception("staging sync callback failed")
-        if type(event).__name__ == "MessageEvent" and getattr(event, "source", None) == "agent":
+        if cls == "MessageEvent" and getattr(event, "source", None) == "agent":
             try:
                 from openhands.sdk.llm import content_to_str
 
@@ -267,7 +277,7 @@ def run_agent_turn(
                 pass
 
     def on_token(chunk: Any) -> None:
-        if cancel_check():
+        if cancel_check() or not agent_run_armed.is_set():
             return
         timeline.mark("first_token", once=True)
         stream_appender.feed(chunk)
@@ -314,7 +324,11 @@ def run_agent_turn(
     }
     if not use_remote:
         conv_kwargs["persistence_dir"] = str(Path(settings.conversation_dir))
+    # Remote SDK: REST sync paginates conversation history + WS handshake here.
+    # User callbacks are NOT replayed for history (see RemoteConversation.__init__);
+    # agent_run_armed gates DB writes until POST /run.
     try:
+        timeline.mark("remote_conversation_begin")
         conversation = Conversation(**conv_kwargs)
     except Exception:
         if remote_cm is not None:
@@ -335,7 +349,6 @@ def run_agent_turn(
         except Exception:
             logger.exception("bootstrap run_event insert failed")
 
-    fresh = not (conv_dir / "base_state.json").is_file()
     if seed:
         conversation.send_message(seed)
         timeline.mark("user_message_sent")
@@ -367,6 +380,7 @@ def run_agent_turn(
     stall_thread = threading.Thread(target=_stall_watch, name=f"stall-{run_id}", daemon=True)
     try:
         timeline.mark("conversation_run_start")
+        agent_run_armed.set()
         stall_thread.start()
         conversation.run()
         timeline.mark("conversation_run_done")

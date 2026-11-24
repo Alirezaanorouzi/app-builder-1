@@ -34,9 +34,9 @@ Do **not** call `snapshot()` mid-run (it stops the session); use it only for the
 
 ## Phase 0 — Agent Server + LLM egress
 
-1. `python scripts/phase0_spike_agent_server.py` — preview + Agent Server health + `pwd` on VM.
-2. `python scripts/phase0_llm_egress.py` — `curl` Liara and `LLM_PROXY_PUBLIC_URL` **from inside** the sandbox; log HTTP codes and latency.
-3. **Go/no-go:** proceed with `AGENT_RUNTIME=remote` only if Agent Server health OK **and** (A) direct Liara from VM or (B) public proxy → Liara works.
+1. **`cd apps/agent && PYTHONPATH=. python -m pytest tests -q`** — runtime, Agent Server reuse, sandbox URLs.
+2. **Manual:** open a project, wait for sandbox wake, send one prompt; worker logs should show stack reuse and `Agent Server already ready` when warm.
+3. **Go/no-go:** `AGENT_RUNTIME=remote` only if Agent Server `/ready` works **and** Liara is reachable from the VM (direct or `LLM_PROXY_PUBLIC_URL`).
 
 Complete against the **pinned** Python `vercel` package before production.
 

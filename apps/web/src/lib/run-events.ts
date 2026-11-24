@@ -5,6 +5,13 @@ export type RunEventRow = {
   payload?: Record<string, unknown>;
 };
 
+const INTERNAL_RUN_EVENTS = new Set(["RunTimelineEvent"]);
+
+/** Worker UX markers — not shown in the activity chip rail. */
+export function isActivityChipEvent(row: RunEventRow): boolean {
+  return !INTERNAL_RUN_EVENTS.has(row.event_class);
+}
+
 const CHIP_MAX_LEN = 80;
 
 function clip(text: string, max = CHIP_MAX_LEN): string {

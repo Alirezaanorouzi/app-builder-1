@@ -497,6 +497,11 @@ class Database:
                     SELECT wr.*
                     FROM sandbox_wake_requests wr
                     WHERE wr.status = 'queued'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM agent_runs ar
+                        WHERE ar.project_id = wr.project_id
+                          AND ar.status = 'running'
+                      )
                     ORDER BY wr.created_at
                     LIMIT %s
                     FOR UPDATE OF wr SKIP LOCKED

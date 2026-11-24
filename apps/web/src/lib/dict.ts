@@ -12,6 +12,7 @@ export const fa = {
   send: "ارسال",
   stop: "توقف",
   waiting: "در صف…",
+  thinking: "در حال فکر کردن…",
   running: "در حال ساخت…",
   previewEmpty: "پس از اولین اجرا پیش‌نمایش اینجا نمایش داده می‌شود",
   previewPendingVercel:

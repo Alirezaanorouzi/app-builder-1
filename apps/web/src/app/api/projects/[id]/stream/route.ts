@@ -97,7 +97,7 @@ export async function GET(
         }
         const active =
           activeRun?.status === "queued" || activeRun?.status === "running" || previewWake != null;
-        return active ? 400 : 1000;
+        return active ? 200 : 1000;
       };
       const schedule = () => {
         pollTimer = setTimeout(() => {
