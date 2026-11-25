@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from worker.agent_server_client import ready_ok
+from worker.sandbox_cold import stack_considered_warm
 
 if TYPE_CHECKING:
     from worker.db import Database
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _WAKE_POLL_INTERVAL_SEC = 0.5
-_DEFAULT_WAKE_WAIT_SEC = 60.0
+_DEFAULT_WAKE_WAIT_SEC = 180.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class VercelStackEnsureResult:
 
 def is_db_stack_warm(sb_row: dict[str, Any] | None) -> bool:
     if sb_row is None:
+        return False
+    if not stack_considered_warm(sb_row):
         return False
     provider = sb_row.get("provider")
     if provider not in (None, "vercel"):
@@ -85,6 +88,7 @@ def _mark_stale_agent_status(db: Database, project_id: uuid.UUID, sb_row: dict[s
         agent_session_api_key=sb_row.get("agent_session_api_key"),
         agent_server_status="starting",
     )
+    db.clear_sandbox_session_expires(project_id)
 
 
 def ensure_vercel_remote_stack(
@@ -94,8 +98,10 @@ def ensure_vercel_remote_stack(
     *,
     remote_agent: bool,
     timeline: RunTimeline | None = None,
-    wait_wake_sec: float = _DEFAULT_WAKE_WAIT_SEC,
+    wait_wake_sec: float | None = None,
 ) -> VercelStackEnsureResult:
+    if wait_wake_sec is None:
+        wait_wake_sec = _DEFAULT_WAKE_WAIT_SEC
     """
     Reuse a live stack from DB when possible; otherwise resume sandbox + warm Agent Server.
     Used by preview-wake jobs and agent runs.

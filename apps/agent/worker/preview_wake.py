@@ -28,6 +28,8 @@ def execute_preview_wake(
 
     try:
         ws = build_workspace(settings, str(project_id))
+        if isinstance(ws, VercelWorkspace):
+            ws.bind_database(db)
         preview: str | None = None
         external_id: str | None = None
         provider = settings.sandbox_provider
@@ -39,10 +41,17 @@ def execute_preview_wake(
                 ws,
                 project_id,
                 remote_agent=remote,
-                wait_wake_sec=0.0,
+                wait_wake_sec=settings.sandbox_stack_wait_seconds,
             )
             persist_vercel_stack(db, project_id, ws, stack)
             ws.extend_vercel_idle_deadline(force=True)
+            from worker.session_expiry import record_sandbox_session_expiry
+
+            record_sandbox_session_expiry(
+                db,
+                project_id,
+                lease_seconds=settings.sandbox_idle_seconds,
+            )
             preview = stack.preview_url
             external_id = stack.external_id
             provider = "vercel"

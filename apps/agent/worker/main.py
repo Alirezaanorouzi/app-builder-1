@@ -30,9 +30,11 @@ from worker.config import Settings  # noqa: E402
 from worker.db import Database  # noqa: E402
 from worker.logging_config import configure_worker_logging  # noqa: E402
 from worker.openhands_runner import run_agent_turn  # noqa: E402
+from worker.run_lifecycle import RunHeartbeat  # noqa: E402
 from worker.run_timeline import RunTimeline, prewarm_openhands_sdk  # noqa: E402
 from worker.preview_wake import execute_preview_wake  # noqa: E402
 from worker.sandbox_stack import ensure_vercel_remote_stack, persist_vercel_stack  # noqa: E402
+from worker.session_expiry import record_sandbox_session_expiry  # noqa: E402
 from worker.remote_control import (  # noqa: E402
     fail_stale_runs_with_remote_teardown,
     fail_worker_runs_on_startup_with_remote_teardown,
@@ -55,8 +57,17 @@ class Worker:
         )
         self.worker_id = f"worker-{uuid.uuid4().hex[:8]}"
         self._shutdown = threading.Event()
-        self._active: dict[uuid.UUID, threading.Event] = {}
-        self._pool = ThreadPoolExecutor(max_workers=self.settings.worker_concurrency)
+        self._active_runs: dict[uuid.UUID, threading.Event] = {}
+        self._active_wake_projects: set[uuid.UUID] = set()
+        self._wake_guard = threading.Lock()
+        self._run_pool = ThreadPoolExecutor(
+            max_workers=self.settings.worker_concurrency,
+            thread_name_prefix="run",
+        )
+        self._wake_pool = ThreadPoolExecutor(
+            max_workers=self.settings.worker_wake_concurrency,
+            thread_name_prefix="wake",
+        )
 
     def start(self) -> None:
         fail_worker_runs_on_startup_with_remote_teardown(self.settings, self.db, self.worker_id)
@@ -67,69 +78,88 @@ class Worker:
                 name="openhands-prewarm",
                 daemon=True,
             ).start()
-        logger.info("Worker %s started (concurrency=%s)", self.worker_id, self.settings.worker_concurrency)
+        logger.info(
+            "Worker %s started (runs=%s, wake=%s)",
+            self.worker_id,
+            self.settings.worker_concurrency,
+            self.settings.worker_wake_concurrency,
+        )
 
         while not self._shutdown.is_set():
             try:
-                fail_stale_runs_with_remote_teardown(self.settings, self.db)
-                active = sum(1 for _ in self._active)
-                slots = max(0, self.settings.worker_concurrency - active)
+                fail_stale_runs_with_remote_teardown(
+                    self.settings,
+                    self.db,
+                    older_than_seconds=self.settings.run_stale_heartbeat_seconds,
+                )
+                run_slots = max(
+                    0,
+                    self.settings.worker_concurrency - len(self._active_runs),
+                )
                 claimed: list[dict] = []
-                if slots > 0:
-                    claimed = self.db.claim_runs(self.worker_id, slots)
+                if run_slots > 0:
+                    claimed = self.db.claim_runs(self.worker_id, run_slots)
                     for row in claimed:
-                        self._active[uuid.UUID(str(row["id"]))] = threading.Event()
-                        self._pool.submit(self._execute_run, row)
-                        slots -= 1
-                busy_projects = {uuid.UUID(str(r["project_id"])) for r in claimed}
-                if slots > 0:
-                    wake_limit = min(2, slots)
-                    for row in self.db.claim_wake_jobs(self.worker_id, wake_limit):
+                        run_id = uuid.UUID(str(row["id"]))
+                        self._active_runs[run_id] = threading.Event()
+                        hb = RunHeartbeat(self.db, run_id)
+                        hb.start()
+                        self._run_pool.submit(self._execute_run, row, hb)
+                wake_slots = max(
+                    0,
+                    self.settings.worker_wake_concurrency - len(self._active_wake_projects),
+                )
+                if wake_slots > 0:
+                    for row in self.db.claim_wake_jobs(self.worker_id, wake_slots):
                         pid = uuid.UUID(str(row["project_id"]))
-                        if pid in busy_projects:
-                            self.db.release_sandbox_wake(uuid.UUID(str(row["id"])))
-                            continue
-                        busy_projects.add(pid)
-                        self._pool.submit(self._execute_wake, row)
+                        with self._wake_guard:
+                            if pid in self._active_wake_projects:
+                                self.db.release_sandbox_wake(uuid.UUID(str(row["id"])))
+                                continue
+                            self._active_wake_projects.add(pid)
+                        self._wake_pool.submit(self._execute_wake, row, pid)
             except Exception:
                 logger.exception("claim loop error")
             self._shutdown.wait(self.settings.poll_seconds)
 
         logger.info("Shutting down…")
-        for run_id, ev in list(self._active.items()):
+        for run_id, ev in list(self._active_runs.items()):
             ev.set()
-        self._pool.shutdown(wait=True, cancel_futures=False)
+        self._run_pool.shutdown(wait=True, cancel_futures=False)
+        self._wake_pool.shutdown(wait=True, cancel_futures=False)
         self.db.close()
 
-    def _execute_wake(self, row: dict) -> None:
+    def _execute_wake(self, row: dict, project_id: uuid.UUID) -> None:
         try:
             execute_preview_wake(self.settings, self.db, row)
         except Exception:
             logger.exception("preview wake job failed")
+        finally:
+            with self._wake_guard:
+                self._active_wake_projects.discard(project_id)
 
-    def _execute_run(self, row: dict) -> None:
+    def _execute_run(self, row: dict, heartbeat: RunHeartbeat) -> None:
         run_id = uuid.UUID(str(row["id"]))
         project_id = uuid.UUID(str(row["project_id"]))
-        stop = self._active.get(run_id)
-        hb_stop = threading.Event()
+        stop = self._active_runs.get(run_id)
+        self.db.mark_run_execution_started(run_id)
 
         ws = None
-
-        def _heartbeat_loop() -> None:
-            while not hb_stop.wait(20):
-                self.db.touch_heartbeat(run_id)
-                if isinstance(ws, VercelWorkspace):
-                    try:
-                        ws.extend_vercel_idle_deadline()
-                    except Exception:
-                        logger.debug("Vercel lease extend on heartbeat failed", exc_info=True)
-
-        hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"hb-{run_id}")
-        hb_thread.start()
         timeline = RunTimeline(run_id)
         timeline.mark("run_claimed")
+
+        def _touch_session_expiry() -> None:
+            record_sandbox_session_expiry(
+                self.db,
+                project_id,
+                lease_seconds=self.settings.sandbox_idle_seconds,
+            )
+
         try:
             ws = build_workspace(self.settings, str(project_id))
+            if isinstance(ws, VercelWorkspace):
+                ws.bind_database(self.db)
+                heartbeat.set_lease_extend(ws.extend_vercel_idle_deadline)
             timeline.mark("workspace_ready")
             ws.ensure(str(project_id), row.get("template_id") or "vite-react")
             provider = self.settings.sandbox_provider
@@ -164,9 +194,11 @@ class Worker:
                         project_id,
                         remote_agent=remote,
                         timeline=timeline,
+                        wait_wake_sec=self.settings.sandbox_stack_wait_seconds,
                     )
                     persist_vercel_stack(self.db, project_id, ws, stack)
                     ws.extend_vercel_idle_deadline(force=True)
+                    _touch_session_expiry()
                     timeline.mark("sandbox_vite_bootstrap")
                 except Exception:
                     logger.exception("Vercel stack ensure failed for %s", project_id)
@@ -209,6 +241,7 @@ class Worker:
                         preview_url=None,
                         external_id=ext_id,
                     )
+                _touch_session_expiry()
             elif self.settings.sandbox_provider == "local":
                 preview = ws.preview_url()
                 if preview:
@@ -235,10 +268,11 @@ class Worker:
             if isinstance(ws, VercelWorkspace):
                 try:
                     ws.extend_vercel_idle_deadline(force=True)
+                    _touch_session_expiry()
                 except Exception:
                     logger.debug("Vercel post-run lease extend failed", exc_info=True)
-            hb_stop.set()
-            self._active.pop(run_id, None)
+            heartbeat.stop()
+            self._active_runs.pop(run_id, None)
 
 
 def main() -> None:

@@ -247,6 +247,9 @@ def _npm_install_if_needed(sandbox: object) -> bool:
 
 def _start_vite_dev_server(sandbox: object) -> None:
     """Start Vite bound to the exposed sandbox port (must match ``ports=[5173]``)."""
+    if _wait_vite_http(sandbox, timeout_sec=4.0):
+        logger.info("Vercel sandbox: Vite already listening on %s, skip restart", PREVIEW_PORT)
+        return
     sandbox.run_command(  # type: ignore[attr-defined]
         "bash",
         args=["-lc", "pkill -f '[v]ite' 2>/dev/null || true"],

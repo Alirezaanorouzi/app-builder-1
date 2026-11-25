@@ -1,10 +1,10 @@
-﻿# Push env from apps/web/.env.local to Liara web + worker apps (uses auth token at bottom of file).
+﻿# Push env from apps/web/.env.local to Liara web + worker apps (CLI: liara login or LIARA_CLI_TOKEN).
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $envFile = Join-Path $Root "apps\web\.env.local"
-$teamId = "6acce5116de510a731393ee5"
 $webApp = "appbuilder1-web"
 $workerApp = "appbuilder1-worker"
+. (Join-Path $Root "scripts\LiaraCli.ps1")
 
 function Parse-EnvFile($path) {
   $map = @{}
@@ -21,13 +21,8 @@ function Parse-EnvFile($path) {
 }
 
 $e = Parse-EnvFile $envFile
-$authToken = $e["LIARA_API_KEY"]
-if ($authToken -like "*type*auth*" -or $authToken.Length -gt 200) {
-  # last line wins in map — but auth overwrites ai key; detect by reading last LIARA_API_KEY line
-  $authToken = (Get-Content $envFile | Where-Object { $_ -match '^LIARA_API_KEY=' } | Select-Object -Last 1) -replace '^LIARA_API_KEY=',''
-}
 $aiKey = (Get-Content $envFile | Where-Object { $_ -match '^LIARA_API_KEY=' } | Select-Object -First 1) -replace '^LIARA_API_KEY=',''
-$cli = @("--api-token", $authToken, "--team-id", $teamId)
+$cli = Get-LiaraCliAuthArgs -RepoRoot $Root
 
 $dbUrl = $e["DATABASE_URL"]
 if ($dbUrl -match "127\.0\.0\.1") {
@@ -52,11 +47,20 @@ $workerPairs = @(
   "LIARA_BASE_URL=$($e['LIARA_BASE_URL'])",
   "LIARA_MODELS=$($e['LIARA_MODELS'])",
   "WORKER_CONCURRENCY=5",
+  "WORKER_WAKE_CONCURRENCY=$(if ($e['WORKER_WAKE_CONCURRENCY']) { $e['WORKER_WAKE_CONCURRENCY'] } else { '2' })",
+  "SANDBOX_STACK_WAIT_SECONDS=$(if ($e['SANDBOX_STACK_WAIT_SECONDS']) { $e['SANDBOX_STACK_WAIT_SECONDS'] } else { '180' })",
+  "SANDBOX_LOCK_TIMEOUT_SECONDS=$(if ($e['SANDBOX_LOCK_TIMEOUT_SECONDS']) { $e['SANDBOX_LOCK_TIMEOUT_SECONDS'] } else { '300' })",
+  "REMOTE_CONVERSATION_OPEN_TIMEOUT_SECONDS=$(if ($e['REMOTE_CONVERSATION_OPEN_TIMEOUT_SECONDS']) { $e['REMOTE_CONVERSATION_OPEN_TIMEOUT_SECONDS'] } else { '120' })",
+  "REMOTE_CONVERSATION_ROTATE_AFTER_MESSAGES=$(if ($e['REMOTE_CONVERSATION_ROTATE_AFTER_MESSAGES']) { $e['REMOTE_CONVERSATION_ROTATE_AFTER_MESSAGES'] } else { '12' })",
+  "RUN_STALE_HEARTBEAT_SECONDS=$(if ($e['RUN_STALE_HEARTBEAT_SECONDS']) { $e['RUN_STALE_HEARTBEAT_SECONDS'] } else { '180' })",
   "WORKER_POLL_SECONDS=$($e['WORKER_POLL_SECONDS'])",
   "RUN_EVENT_MAX_BYTES=$($e['RUN_EVENT_MAX_BYTES'])",
   "SANDBOX_PROVIDER=$($e['SANDBOX_PROVIDER'])",
   "SANDBOX_IDLE_SECONDS=$($e['SANDBOX_IDLE_SECONDS'])",
   "SANDBOX_EXTEND_WHEN_REMAINING_SECONDS=$($e['SANDBOX_EXTEND_WHEN_REMAINING_SECONDS'])",
+  "VERCEL_SANDBOX_MAX_SESSION_SECONDS=$(if ($e['VERCEL_SANDBOX_MAX_SESSION_SECONDS']) { $e['VERCEL_SANDBOX_MAX_SESSION_SECONDS'] } else { '2700' })",
+  "VERCEL_SNAPSHOT_RETENTION_COUNT=$(if ($e['VERCEL_SNAPSHOT_RETENTION_COUNT']) { $e['VERCEL_SNAPSHOT_RETENTION_COUNT'] } else { '1' })",
+  "VERCEL_SNAPSHOT_DELETE_EVICTED=$(if ($e['VERCEL_SNAPSHOT_DELETE_EVICTED']) { $e['VERCEL_SNAPSHOT_DELETE_EVICTED'] } else { '1' })",
   "VERCEL_TOKEN=$($e['VERCEL_TOKEN'])",
   "VERCEL_TEAM_ID=$($e['VERCEL_TEAM_ID'])",
   "VERCEL_PROJECT_ID=$($e['VERCEL_PROJECT_ID'])",

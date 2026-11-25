@@ -20,6 +20,7 @@ type SandboxInfo = {
   status: string | null;
   name: string | null;
   agent_server_status?: string | null;
+  session_expires_at?: string | null;
 } | null;
 
 function shortModelLabel(model: string) {
@@ -69,6 +70,7 @@ export default function ProjectPage() {
             status: p.sandbox_status,
             name: p.sandbox_name,
             agent_server_status: p.agent_server_status ?? null,
+            session_expires_at: p.session_expires_at ?? null,
           });
         }
       });

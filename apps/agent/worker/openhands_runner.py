@@ -23,6 +23,7 @@ from worker.llm_proxy import mint_run_llm_credential, revoke_run_llm_key
 from worker.workspace.base import WorkspaceAdapter
 from worker.builder_prompt import BUILDER_SYSTEM_PROMPT
 from worker.remote_conversation_sync import ensure_conversation_id_matches_remote_llm
+from worker.run_lifecycle import CancelMonitor
 from worker.run_timeline import RunTimeline
 from worker.stream_tokens import RunLiveStreamAppender
 from worker.workspace.vercel_ws import VercelWorkspace
@@ -187,6 +188,18 @@ def run_agent_turn(
         msg = "Agent Server did not become ready on the Vercel sandbox"
         db.insert_message(project_id, run_id, "assistant", msg)
         return "failed", 0
+    if (
+        use_remote
+        and settings.remote_conversation_rotate_after_messages > 0
+        and db.count_project_messages(project_id) >= settings.remote_conversation_rotate_after_messages
+    ):
+        conversation_id, rotate_seed = seed_fallback(db, project_id, ws)
+        seed = f"{rotate_seed}\n\nUser request: {seed}" if seed else rotate_seed
+        logger.info(
+            "Rotated remote conversation for project %s (messages >= %s)",
+            project_id,
+            settings.remote_conversation_rotate_after_messages,
+        )
     if use_remote:
         try:
             llm_credential = mint_run_llm_credential(
@@ -294,6 +307,17 @@ def run_agent_turn(
         assert isinstance(ws, VercelWorkspace)
         session = ws.project_session
         assert session is not None
+        try:
+            db.insert_run_event(
+                run_id,
+                event_seq_holder["n"],
+                "RunBootstrapEvent",
+                {"summary": "در حال آماده‌سازی agent و همگام‌سازی تاریخچه"},
+                tool_name=None,
+            )
+            event_seq_holder["n"] += 1
+        except Exception:
+            logger.exception("bootstrap run_event insert failed")
         agent_url = ws.agent_server_url()
         if agent_url and llm_credential:
             conversation_id = ensure_conversation_id_matches_remote_llm(
@@ -327,27 +351,42 @@ def run_agent_turn(
     # Remote SDK: REST sync paginates conversation history + WS handshake here.
     # User callbacks are NOT replayed for history (see RemoteConversation.__init__);
     # agent_run_armed gates DB writes until POST /run.
-    try:
-        timeline.mark("remote_conversation_begin")
-        conversation = Conversation(**conv_kwargs)
-    except Exception:
-        if remote_cm is not None:
-            remote_cm.__exit__(None, None, None)
-        raise
-    timeline.mark("conversation_constructed")
+    conversation: Any
+    open_err: list[BaseException] = []
 
-    if use_remote:
+    def _open_conversation() -> None:
         try:
-            db.insert_run_event(
-                run_id,
-                event_seq_holder["n"],
-                "RunBootstrapEvent",
-                {"summary": "در حال اجرای agent روی sandbox"},
-                tool_name=None,
+            nonlocal conversation
+            conversation = Conversation(**conv_kwargs)
+        except BaseException as e:
+            open_err.append(e)
+
+    timeline.mark("remote_conversation_begin")
+    open_timeout = (
+        settings.remote_conversation_open_timeout_seconds if use_remote else 0.0
+    )
+    if use_remote and open_timeout > 0:
+        opener = threading.Thread(target=_open_conversation, name=f"conv-open-{run_id}")
+        opener.start()
+        opener.join(timeout=open_timeout)
+        if opener.is_alive():
+            if remote_cm is not None:
+                remote_cm.__exit__(None, None, None)
+            raise TimeoutError(
+                f"Remote conversation open exceeded {open_timeout:.0f}s (history sync)"
             )
-            event_seq_holder["n"] += 1
+        if open_err:
+            if remote_cm is not None:
+                remote_cm.__exit__(None, None, None)
+            raise open_err[0]
+    else:
+        try:
+            conversation = Conversation(**conv_kwargs)
         except Exception:
-            logger.exception("bootstrap run_event insert failed")
+            if remote_cm is not None:
+                remote_cm.__exit__(None, None, None)
+            raise
+    timeline.mark("conversation_constructed")
 
     if seed:
         conversation.send_message(seed)
@@ -378,23 +417,34 @@ def run_agent_turn(
             )
 
     stall_thread = threading.Thread(target=_stall_watch, name=f"stall-{run_id}", daemon=True)
+    cancel_mon = CancelMonitor(
+        settings,
+        db,
+        run_row,
+        cancel_check=cancel_check,
+    )
     try:
         timeline.mark("conversation_run_start")
         agent_run_armed.set()
         stall_thread.start()
+        cancel_mon.start()
         conversation.run()
         timeline.mark("conversation_run_done")
     except Exception as e:
-        logger.exception("conversation.run failed")
-        final_status = "failed"
-        db.insert_message(
-            project_id,
-            run_id,
-            "assistant",
-            liara_user_error_message(e, liara_model=liara_model),
-        )
+        if cancel_mon.cancelled.is_set() or cancel_check():
+            final_status = "cancelled"
+        else:
+            logger.exception("conversation.run failed")
+            final_status = "failed"
+            db.insert_message(
+                project_id,
+                run_id,
+                "assistant",
+                liara_user_error_message(e, liara_model=liara_model),
+            )
     finally:
         stall_stop.set()
+        cancel_mon.stop()
         stream_appender.flush()
         if llm_credential:
             revoke_run_llm_key(settings, llm_credential.key_id)
@@ -444,6 +494,8 @@ def run_agent_turn(
             sha,
             size,
         )
+    if cancel_check() and final_status == "succeeded":
+        final_status = "cancelled"
     if final_status == "succeeded":
         reply = "\n".join(assistant_chunks).strip()
         if hit_max_iterations:

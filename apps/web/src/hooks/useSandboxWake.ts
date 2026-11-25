@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { needsSandboxStackWake, type SandboxWakeSnapshot } from "@/lib/sandbox-wake";
 
 const MIN_WAKE_INTERVAL_MS = 30_000;
@@ -29,10 +29,6 @@ export function useSandboxWake(
       lastWakeAt.current = 0;
     });
   }, [projectId, sandbox, previewUrl, options.busy, options.wakeInFlight]);
-
-  useEffect(() => {
-    requestWake();
-  }, [requestWake]);
 
   return { requestWake };
 }

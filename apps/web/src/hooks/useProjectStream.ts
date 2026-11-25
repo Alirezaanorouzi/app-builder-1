@@ -26,6 +26,7 @@ type SandboxInfo = {
   status: string | null;
   name: string | null;
   agent_server_status?: string | null;
+  session_expires_at?: string | null;
 } | null;
 
 function applyStreamPayload(

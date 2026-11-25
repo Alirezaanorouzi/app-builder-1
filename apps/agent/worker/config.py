@@ -29,7 +29,13 @@ class Settings:
     workspace_staging_dir: str
     archive_local_dir: str
     worker_concurrency: int
+    worker_wake_concurrency: int
     poll_seconds: float
+    sandbox_stack_wait_seconds: float
+    sandbox_lock_timeout_seconds: float
+    remote_conversation_open_timeout_seconds: float
+    remote_conversation_rotate_after_messages: int
+    run_stale_heartbeat_seconds: int
     deploy_env: str
     sandbox_provider: str
     sandbox_idle_seconds: int
@@ -38,6 +44,7 @@ class Settings:
     vercel_snapshot_retention_count: int
     vercel_snapshot_delete_evicted: bool
     run_event_max_bytes: int
+    oh_max_cmd_output_chars: int
     openhands_sdk_version: str
     liara_api_key: str
     liara_base_url: str
@@ -95,7 +102,23 @@ class Settings:
             workspace_staging_dir=workspace_staging_dir,
             archive_local_dir=archive_local_dir,
             worker_concurrency=int(os.environ.get("WORKER_CONCURRENCY", "2")),
+            worker_wake_concurrency=int(os.environ.get("WORKER_WAKE_CONCURRENCY", "2")),
             poll_seconds=float(os.environ.get("WORKER_POLL_SECONDS", "1")),
+            sandbox_stack_wait_seconds=float(
+                os.environ.get("SANDBOX_STACK_WAIT_SECONDS", "180")
+            ),
+            sandbox_lock_timeout_seconds=float(
+                os.environ.get("SANDBOX_LOCK_TIMEOUT_SECONDS", "300")
+            ),
+            remote_conversation_open_timeout_seconds=float(
+                os.environ.get("REMOTE_CONVERSATION_OPEN_TIMEOUT_SECONDS", "120")
+            ),
+            remote_conversation_rotate_after_messages=int(
+                os.environ.get("REMOTE_CONVERSATION_ROTATE_AFTER_MESSAGES", "12")
+            ),
+            run_stale_heartbeat_seconds=int(
+                os.environ.get("RUN_STALE_HEARTBEAT_SECONDS", "180")
+            ),
             deploy_env=os.environ.get("DEPLOY_ENV", "dev"),
             sandbox_provider=os.environ.get("SANDBOX_PROVIDER", "local").lower(),
             sandbox_idle_seconds=int(os.environ.get("SANDBOX_IDLE_SECONDS", "600")),
@@ -114,6 +137,7 @@ class Settings:
             .lower()
             in ("1", "true", "yes"),
             run_event_max_bytes=int(os.environ.get("RUN_EVENT_MAX_BYTES", "65536")),
+            oh_max_cmd_output_chars=int(os.environ.get("OH_MAX_CMD_OUTPUT_CHARS", "12000")),
             openhands_sdk_version=os.environ.get("OPENHANDS_SDK_VERSION", "1.63.1"),
             liara_api_key=os.environ.get("LIARA_API_KEY", ""),
             liara_base_url=os.environ.get("LIARA_BASE_URL", ""),

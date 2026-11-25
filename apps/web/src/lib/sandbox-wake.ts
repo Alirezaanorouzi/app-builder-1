@@ -5,7 +5,15 @@ export type SandboxWakeSnapshot = {
   provider?: string | null;
   status?: string | null;
   agent_server_status?: string | null;
+  session_expires_at?: string | null;
 } | null;
+
+function sessionExpired(sandbox: SandboxWakeSnapshot): boolean {
+  const raw = sandbox?.session_expires_at;
+  if (!raw) return false;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) && t <= Date.now();
+}
 
 export function usesVercelRemoteStack(sandbox: SandboxWakeSnapshot): boolean {
   const provider = sandbox?.provider;
@@ -23,7 +31,8 @@ export function needsSandboxStackWake(
   const effectivePreview = previewUrl ?? sandbox?.preview_url ?? null;
   const stopped = sandbox?.status === "stopped";
   const noPreview = !effectivePreview;
-  const agentNotReady = sandbox?.agent_server_status !== "ready";
+  const agentNotReady =
+    sandbox?.agent_server_status !== "ready" || sessionExpired(sandbox);
 
   return stopped || noPreview || agentNotReady;
 }
@@ -39,5 +48,6 @@ export function isSandboxStackReady(
   const effectivePreview = previewUrl ?? sandbox?.preview_url ?? null;
   if (!effectivePreview) return false;
   if (sandbox?.status === "stopped") return false;
+  if (sessionExpired(sandbox)) return false;
   return sandbox?.agent_server_status === "ready";
 }

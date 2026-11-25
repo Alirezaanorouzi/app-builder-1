@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
 from uuid import UUID
 
@@ -33,6 +34,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_AGENT_ENTRY_REMOTE = ".openhands/agent_server_entry.py"
+
+
+def _ensure_agent_server_entry_on_vm(sandbox: object, settings: Settings) -> None:
+    """Ship capped Agent Server entrypoint into the persistent VM workspace."""
+    local = Path(__file__).with_name("agent_server_entry.py")
+    if not local.is_file():
+        return
+    fs = getattr(sandbox, "fs", None)
+    if fs is None:
+        return
+    data = local.read_bytes()
+    with fs.batch(cwd=REMOTE_WORKDIR) as batch:
+        batch.write_bytes(_AGENT_ENTRY_REMOTE, data)
+
 
 def _derive_session_api_key(settings: Settings, project_id: str) -> str:
     if settings.oh_session_api_key:
@@ -56,6 +72,7 @@ def _agent_server_env(
         "PORT": str(AGENT_SERVER_PORT),
         "OPENHANDS_SUPPRESS_BANNER": "1",
         "LITELLM_LOG": "ERROR",
+        "OH_MAX_CMD_OUTPUT_CHARS": str(settings.oh_max_cmd_output_chars),
     }
 
 
@@ -89,12 +106,15 @@ def _wait_agent_health_on_vm(sandbox: object, *, attempts: int = 30) -> bool:
 def _start_agent_server_process(
     sandbox: object,
     env: dict[str, str],
+    *,
+    settings: Settings | None = None,
 ) -> None:
+    if settings is not None:
+        _ensure_agent_server_entry_on_vm(sandbox, settings)
     _stop_agent_server_process(sandbox)
     create_cmd = getattr(sandbox, "create_command", None)
     cmd_args = [
-        "-m",
-        "openhands.agent_server",
+        _AGENT_ENTRY_REMOTE,
         "--host",
         "0.0.0.0",
         "--port",
@@ -122,9 +142,12 @@ def _start_agent_server_process(
             (
                 f"cd {REMOTE_WORKDIR} && "
                 f"export OH_SESSION_API_KEYS_0='{env['OH_SESSION_API_KEYS_0']}' "
-                f"OH_SECRET_KEY='{env['OH_SECRET_KEY']}' PORT={AGENT_SERVER_PORT}; "
+                f"OH_SECRET_KEY='{env['OH_SECRET_KEY']}' "
+                f"OH_MAX_CMD_OUTPUT_CHARS='{env.get('OH_MAX_CMD_OUTPUT_CHARS', '12000')}' "
+                f"PORT={AGENT_SERVER_PORT}; "
                 f"pkill -f '[o]penhands.agent_server' 2>/dev/null || true; "
-                f"nohup python -m openhands.agent_server --host 0.0.0.0 "
+                f"mkdir -p .openhands; "
+                f"nohup python {_AGENT_ENTRY_REMOTE} --host 0.0.0.0 "
                 f"--port {AGENT_SERVER_PORT} >/tmp/agent-server.log 2>&1 &"
             ),
         ],
@@ -266,7 +289,7 @@ class VercelProjectSession:
 
         logger.info("Agent Server cold start for project %s", self.project_id)
         env = _agent_server_env(self.settings, self.session_api_key)
-        _start_agent_server_process(sandbox, env)
+        _start_agent_server_process(sandbox, env, settings=self.settings)
         time.sleep(1.0)
         if not _wait_agent_health_on_vm(sandbox):
             logger.warning("Agent Server did not answer on VM port %s", AGENT_SERVER_PORT)

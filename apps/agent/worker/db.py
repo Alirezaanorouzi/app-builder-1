@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -38,6 +40,11 @@ class Database:
                     FROM agent_runs ar
                     JOIN projects p ON p.id = ar.project_id
                     WHERE ar.status = 'queued'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM sandbox_wake_requests wr
+                        WHERE wr.project_id = ar.project_id
+                          AND wr.status IN ('queued', 'running')
+                      )
                     ORDER BY ar.created_at
                     LIMIT %s
                     FOR UPDATE OF ar SKIP LOCKED
@@ -57,6 +64,17 @@ class Database:
                     )
                     claimed.append(dict(row))
                 return claimed
+
+    def mark_run_execution_started(self, run_id: uuid.UUID) -> None:
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE agent_runs
+                SET execution_started_at = %s, heartbeat_at = %s
+                WHERE id = %s AND execution_started_at IS NULL
+                """,
+                (datetime.now(timezone.utc), datetime.now(timezone.utc), run_id),
+            )
 
     def touch_heartbeat(self, run_id: uuid.UUID) -> None:
         with self.conn() as c:
@@ -251,6 +269,7 @@ class Database:
         agent_server_url: str | None = None,
         agent_session_api_key: str | None = None,
         agent_server_status: str | None = None,
+        session_expires_at: datetime | None = None,
     ) -> uuid.UUID:
         with self.conn() as c:
             row = c.execute(
@@ -266,6 +285,7 @@ class Database:
                       agent_server_url = COALESCE(%s, agent_server_url),
                       agent_session_api_key = COALESCE(%s, agent_session_api_key),
                       agent_server_status = COALESCE(%s, agent_server_status),
+                      session_expires_at = COALESCE(%s, session_expires_at),
                       last_active_at = %s, updated_at = %s
                     WHERE project_id = %s
                     RETURNING id
@@ -279,6 +299,7 @@ class Database:
                         agent_server_url,
                         agent_session_api_key,
                         agent_server_status,
+                        session_expires_at,
                         now,
                         now,
                         project_id,
@@ -289,8 +310,9 @@ class Database:
                     """
                     INSERT INTO sandboxes
                       (project_id, name, provider, status, preview_url, external_id,
-                       agent_server_url, agent_session_api_key, agent_server_status, last_active_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                       agent_server_url, agent_session_api_key, agent_server_status,
+                       session_expires_at, last_active_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -303,6 +325,7 @@ class Database:
                         agent_server_url,
                         agent_session_api_key,
                         agent_server_status,
+                        session_expires_at,
                         now,
                     ),
                 )
@@ -354,6 +377,41 @@ class Database:
                 VALUES (%s, %s, %s, %s)
                 """,
                 (sandbox_id, from_status, status, reason),
+            )
+
+    def count_project_messages(self, project_id: uuid.UUID) -> int:
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*)::int AS n FROM messages WHERE project_id = %s",
+                (project_id,),
+            ).fetchone()
+            return int(row["n"]) if row else 0
+
+    def touch_sandbox_session_expires(
+        self,
+        project_id: uuid.UUID,
+        *,
+        expires_at: datetime,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE sandboxes
+                SET session_expires_at = %s, updated_at = now()
+                WHERE project_id = %s
+                """,
+                (expires_at, project_id),
+            )
+
+    def clear_sandbox_session_expires(self, project_id: uuid.UUID) -> None:
+        with self.conn() as c:
+            c.execute(
+                """
+                UPDATE sandboxes
+                SET session_expires_at = NULL, updated_at = now()
+                WHERE project_id = %s
+                """,
+                (project_id,),
             )
 
     def list_prior_messages(self, project_id: uuid.UUID, limit: int = 20) -> list[dict[str, Any]]:
@@ -435,6 +493,7 @@ class Database:
                 FROM agent_runs ar
                 JOIN projects p ON p.id = ar.project_id
                 WHERE ar.status = 'running'
+                  AND ar.execution_started_at IS NOT NULL
                   AND ar.heartbeat_at < now() - (%s || ' seconds')::interval
                 """,
                 (str(older_than_seconds),),
@@ -501,7 +560,7 @@ class Database:
                       AND NOT EXISTS (
                         SELECT 1 FROM agent_runs ar
                         WHERE ar.project_id = wr.project_id
-                          AND ar.status = 'running'
+                          AND ar.status IN ('queued', 'running')
                       )
                     ORDER BY wr.created_at
                     LIMIT %s
@@ -539,3 +598,39 @@ class Database:
                 """,
                 (status, datetime.now(timezone.utc), error, wake_id),
             )
+
+    @staticmethod
+    def project_advisory_key(project_id: str | uuid.UUID) -> int:
+        material = f"builder_sandbox:{project_id}".encode()
+        digest = hashlib.sha256(material).digest()
+        return int.from_bytes(digest[:4], "big") % (2**31)
+
+    @contextmanager
+    def project_advisory_lock(
+        self, project_id: str | uuid.UUID, *, timeout_sec: float = 300.0
+    ) -> Iterator[None]:
+        """Cross-replica mutex for Vercel stack bootstrap (session-scoped PG lock)."""
+        from worker.sandbox_project_lock import SandboxLockTimeout
+
+        key = self.project_advisory_key(project_id)
+        deadline = time.monotonic() + max(0.0, timeout_sec)
+        with self.pool.connection() as connection:
+            acquired = False
+            try:
+                while not acquired:
+                    row = connection.execute(
+                        "SELECT pg_try_advisory_lock(%s) AS ok", (key,)
+                    ).fetchone()
+                    acquired = bool(row and row["ok"])
+                    if acquired:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise SandboxLockTimeout(
+                            f"Timed out after {timeout_sec:.0f}s waiting for "
+                            f"advisory sandbox lock on {project_id}"
+                        )
+                    time.sleep(0.2)
+                yield
+            finally:
+                if acquired:
+                    connection.execute("SELECT pg_advisory_unlock(%s)", (key,))

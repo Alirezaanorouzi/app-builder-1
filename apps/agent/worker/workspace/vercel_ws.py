@@ -12,6 +12,10 @@ from worker.workspace.vercel_agent_session import VercelProjectSession
 from worker.workspace.vercel_names import vercel_sandbox_api_name, vercel_sandbox_display_name
 from worker.sandbox_project_lock import project_sandbox_lock
 from worker.workspace.vercel_sync import VercelSandboxSession
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from worker.db import Database
 
 _SYNC_DEBOUNCE_SEC = 25
 
@@ -42,6 +46,7 @@ class VercelWorkspace(WorkspaceAdapter):
         self._sync_lock = threading.Lock()
         self._last_sync_at = 0.0
         self._staging: LocalWorkspace | None = None
+        self._db: Database | None = None
         if not self._remote:
             self._staging = LocalWorkspace(
                 settings.workspace_staging_dir,
@@ -173,8 +178,18 @@ class VercelWorkspace(WorkspaceAdapter):
     def agent_server_url(self) -> str | None:
         return self._agent_url
 
+    def bind_database(self, db: Database) -> None:
+        self._db = db
+
+    def _sandbox_lock(self):
+        return project_sandbox_lock(
+            self.project_id,
+            timeout_sec=float(self.settings.sandbox_lock_timeout_seconds),
+            db=self._db,
+        )
+
     def ensure_remote_agent_server(self) -> tuple[str | None, str]:
-        with project_sandbox_lock(self.project_id):
+        with self._sandbox_lock():
             session = self._open_session()
             if session is None:
                 return None, "failed"
@@ -210,7 +225,7 @@ class VercelWorkspace(WorkspaceAdapter):
 
     def extend_session(self, *, fast: bool = False) -> None:
         if self._remote:
-            with project_sandbox_lock(self.project_id):
+            with self._sandbox_lock():
                 session = self._open_session()
                 if session is None:
                     return
@@ -237,7 +252,7 @@ class VercelWorkspace(WorkspaceAdapter):
     def wake_preview_only(self) -> tuple[str | None, str | None]:
         """Resume persistent sandbox and start Vite only (no Agent Server / agent run)."""
         if self._remote:
-            with project_sandbox_lock(self.project_id):
+            with self._sandbox_lock():
                 session = self._open_session()
                 if session is None:
                     return None, None

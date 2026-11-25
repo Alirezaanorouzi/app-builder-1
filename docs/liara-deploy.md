@@ -28,12 +28,13 @@ Or use `.\scripts\apply-migrations.ps1` after pointing `DATABASE_URL` at Liara P
 4. Deploy from `apps/web`:
 
 ```powershell
-cd apps\web
-npm ci
-liara deploy
+.\scripts\deploy-liara-web.ps1
+# optional: .\scripts\deploy-liara-web.ps1 --detach
 ```
 
-Liara runs `npm run build` and `npm start`. Use `.liaraignore` at repo root when deploying from parent; deploying from `apps/web` only uploads that tree (recommended).
+Or `cd apps\web` and `liara deploy` after `liara login`. Do **not** use `LIARA_API_KEY` (AI) for CLI auth — use `LIARA_CLI_TOKEN` in `.env.local` or `liara login`.
+
+Liara runs `npm run build` and `npm start`. Deploy from `apps/web` only (recommended).
 
 ## 3. Worker (Docker)
 
@@ -45,7 +46,7 @@ Liara runs `npm run build` and `npm start`. Use `.liaraignore` at repo root when
 ```powershell
 cd c:\Users\LENOVO\app_builder_1
 .\scripts\deploy-liara-worker.ps1
-# or: liara deploy -a appbuilder1-worker --port 8080 --platform docker --team-id YOUR_TEAM_ID
+# optional: .\scripts\deploy-liara-worker.ps1 --detach
 ```
 
 Root `liara.json` must set `"dockerfile": "deploy/Dockerfile.worker"`. Expect a large upload (templates, agent, packages).
@@ -78,6 +79,9 @@ Sandboxes cannot call `127.0.0.1`. Host a small proxy (e.g. `services/llm-proxy`
 ```powershell
 npm i -g @liara/cli
 liara login
+# Optional in apps/web/.env.local (PaaS deploy only — not the AI key):
+# LIARA_CLI_TOKEN=...
+# LIARA_TEAM_ID=...   # defaults to team used by scripts/LiaraCli.ps1
 ```
 
 Docs: [Liara Next.js](https://docs.liara.ir/paas/nextjs/how-tos/deploy-app/) · [Liara Docker](https://docs.liara.ir/paas/docker/how-tos/deploy-app/) · [liara.json](https://docs.liara.ir/paas/liarajson/)

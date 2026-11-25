@@ -24,6 +24,7 @@ export type ProjectStreamSandbox = {
   status: string | null;
   name: string | null;
   agent_server_status: string | null;
+  session_expires_at: string | null;
 } | null;
 
 export type ProjectStreamUpdate = {
@@ -36,37 +37,95 @@ export type ProjectStreamUpdate = {
   previewWake: { id: string; status: string } | null;
 };
 
-export async function loadProjectStreamSnapshot(
-  projectId: string,
-  userId: string,
-): Promise<ProjectStreamUpdate | null> {
+export type ProjectStreamCursor = {
+  lastMessageId: string | null;
+  lastMessageAt: string | null;
+  activeRunId: string | null;
+  lastRunEventSeq: number;
+};
+
+const MESSAGE_CAP = 50;
+
+export const PROJECT_STREAM_NOTIFY_CHANNEL = "builder_project_stream";
+
+export function cursorFromSnapshot(update: ProjectStreamUpdate): ProjectStreamCursor {
+  const lastMsg = update.messages[update.messages.length - 1];
+  const lastEvent = update.runEvents[update.runEvents.length - 1];
+  return {
+    lastMessageId: lastMsg?.id ?? null,
+    lastMessageAt: lastMsg?.created_at ?? null,
+    activeRunId: update.activeRun?.id ?? null,
+    lastRunEventSeq: lastEvent?.seq ?? -1,
+  };
+}
+
+export function mergeProjectStreamUpdates(
+  prev: ProjectStreamUpdate,
+  delta: ProjectStreamUpdate,
+): ProjectStreamUpdate {
+  const runChanged =
+    (delta.activeRun?.id ?? null) !== (prev.activeRun?.id ?? null) ||
+    (delta.activeRun?.status ?? null) !== (prev.activeRun?.status ?? null);
+
+  let messages = prev.messages;
+  if (delta.messages.length) {
+    const seen = new Set(prev.messages.map((m) => m.id));
+    const appended = delta.messages.filter((m) => !seen.has(m.id));
+    if (appended.length) {
+      messages = [...prev.messages, ...appended].slice(-MESSAGE_CAP);
+    }
+  }
+
+  let runEvents = prev.runEvents;
+  if (runChanged && delta.runEvents.length) {
+    runEvents = delta.runEvents;
+  } else if (delta.runEvents.length) {
+    const seenSeq = new Set(prev.runEvents.map((e) => e.seq));
+    const appended = delta.runEvents.filter((e) => !seenSeq.has(e.seq));
+    if (appended.length) {
+      runEvents = [...prev.runEvents, ...appended];
+    }
+  }
+
+  const liveOutput =
+    delta.activeRun?.status === "running"
+      ? delta.liveOutput ?? prev.liveOutput
+      : delta.liveOutput;
+
+  return {
+    messages,
+    activeRun: delta.activeRun ?? prev.activeRun,
+    liveOutput: liveOutput ?? null,
+    previewUrl: delta.previewUrl ?? prev.previewUrl,
+    runEvents,
+    sandbox: delta.sandbox ?? prev.sandbox,
+    previewWake: delta.previewWake ?? prev.previewWake,
+  };
+}
+
+async function assertProjectOwner(projectId: string, userId: string): Promise<boolean> {
   const proj = await query(
     `SELECT p.id FROM projects p WHERE p.id = $1 AND p.owner_id = $2`,
     [projectId, userId],
   );
-  if (!proj.rows[0]) return null;
+  return Boolean(proj.rows[0]);
+}
 
-  const msgs = await query<ProjectStreamMessage>(
-    `SELECT m.id, m.role, m.content, m.created_at, m.run_id
-     FROM messages m
-     WHERE m.project_id = $1
-     ORDER BY m.created_at DESC LIMIT 50`,
-    [projectId],
-  );
+async function loadActiveRunAndMeta(projectId: string): Promise<{
+  activeRun: ProjectStreamActiveRun;
+  sandbox: ProjectStreamSandbox;
+  previewWake: ProjectStreamUpdate["previewWake"];
+  previewUrl: string | null;
+  liveOutput: string | null;
+}> {
   const runs = await query<{ id: string; status: string; live_output: string | null }>(
     `SELECT id, status, live_output FROM agent_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [projectId],
   );
-  const sandbox = await query<{
-    preview_url: string | null;
-    provider: string | null;
-    external_id: string | null;
-    status: string | null;
-    name: string | null;
-    agent_server_status: string | null;
-  }>(
-    `SELECT preview_url, provider, external_id, status, name, agent_server_status
-     FROM sandboxes WHERE project_id = $1 ORDER BY last_active_at DESC NULLS LAST LIMIT 1`,
+  const sandbox = await query<NonNullable<ProjectStreamSandbox>>(`
+    SELECT preview_url, provider, external_id, status, name, agent_server_status,
+           session_expires_at
+    FROM sandboxes WHERE project_id = $1 ORDER BY last_active_at DESC NULLS LAST LIMIT 1`,
     [projectId],
   );
   const wake = await query<{ id: string; status: string }>(
@@ -76,7 +135,36 @@ export async function loadProjectStreamSnapshot(
     [projectId],
   );
   const activeRun = runs.rows[0];
+  const sb = sandbox.rows[0] ?? null;
+  const previewUrl = sb?.preview_url ?? null;
+  const liveOutput =
+    activeRun?.status === "running" ? activeRun.live_output ?? null : null;
+  return {
+    activeRun,
+    sandbox: sb,
+    previewWake: wake.rows[0] ?? null,
+    previewUrl,
+    liveOutput,
+  };
+}
+
+export async function loadProjectStreamSnapshot(
+  projectId: string,
+  userId: string,
+): Promise<ProjectStreamUpdate | null> {
+  if (!(await assertProjectOwner(projectId, userId))) return null;
+
+  const msgs = await query<ProjectStreamMessage>(
+    `SELECT m.id, m.role, m.content, m.created_at, m.run_id
+     FROM messages m
+     WHERE m.project_id = $1
+     ORDER BY m.created_at DESC LIMIT ${MESSAGE_CAP}`,
+    [projectId],
+  );
+
+  const meta = await loadActiveRunAndMeta(projectId);
   let runEvents: ProjectStreamRunEvent[] = [];
+  const activeRun = meta.activeRun;
   if (activeRun && (activeRun.status === "queued" || activeRun.status === "running")) {
     const ev = await query<RunEventRow>(
       `SELECT seq, event_class, tool_name, payload
@@ -89,55 +177,89 @@ export async function loadProjectStreamSnapshot(
       summary: summarizeRunEvent(row),
     }));
   }
-  const sb = sandbox.rows[0];
-  const previewUrl = sb?.preview_url ?? null;
-  const previewWake = wake.rows[0] ?? null;
-  const liveOutput =
-    activeRun?.status === "running" ? activeRun.live_output ?? null : null;
+
   return {
     messages: [...msgs.rows].reverse(),
     activeRun,
-    liveOutput,
-    previewUrl,
+    liveOutput: meta.liveOutput,
+    previewUrl: meta.previewUrl,
     runEvents,
-    sandbox: sb ?? null,
-    previewWake,
+    sandbox: meta.sandbox,
+    previewWake: meta.previewWake,
   };
 }
 
-function streamPollMs(update: ProjectStreamUpdate): number {
-  const active =
-    update.activeRun?.status === "queued" ||
-    update.activeRun?.status === "running" ||
-    update.previewWake != null;
-  return active ? 200 : 1000;
-}
-
-function snapshotKey(update: ProjectStreamUpdate): string {
-  return JSON.stringify({
-    msgs: update.messages,
-    run: update.activeRun,
-    liveOutput: update.liveOutput,
-    previewUrl: update.previewUrl,
-    runEvents: update.runEvents,
-    sandbox: update.sandbox,
-    previewWake: update.previewWake,
-  });
-}
-
-/** Poll interval (ms) returned by tick: faster while a run or wake is in flight. */
-export async function tickProjectStream(
+/** Incremental fetch after LISTEN/NOTIFY (or slow poll). */
+export async function loadProjectStreamDelta(
   projectId: string,
   userId: string,
-  lastSnapshot: string,
-): Promise<{ pollMs: number; snapshot: string; update: ProjectStreamUpdate | null }> {
-  const update = await loadProjectStreamSnapshot(projectId, userId);
-  if (!update) {
-    return { pollMs: 1000, snapshot: lastSnapshot, update: null };
+  cursor: ProjectStreamCursor,
+): Promise<ProjectStreamUpdate | null> {
+  if (!(await assertProjectOwner(projectId, userId))) return null;
+
+  let newMessages: ProjectStreamMessage[] = [];
+  if (cursor.lastMessageAt) {
+    const msgs = await query<ProjectStreamMessage>(
+      `SELECT m.id, m.role, m.content, m.created_at, m.run_id
+       FROM messages m
+       WHERE m.project_id = $1
+         AND (m.created_at > $2::timestamptz
+              OR (m.created_at = $2::timestamptz AND ($3::uuid IS NULL OR m.id > $3)))
+       ORDER BY m.created_at ASC
+       LIMIT ${MESSAGE_CAP}`,
+      [projectId, cursor.lastMessageAt, cursor.lastMessageId],
+    );
+    newMessages = msgs.rows;
+  } else {
+    const msgs = await query<ProjectStreamMessage>(
+      `SELECT m.id, m.role, m.content, m.created_at, m.run_id
+       FROM messages m
+       WHERE m.project_id = $1
+       ORDER BY m.created_at DESC LIMIT ${MESSAGE_CAP}`,
+      [projectId],
+    );
+    newMessages = [...msgs.rows].reverse();
   }
-  const snapshot = snapshotKey(update);
-  if (snapshot === lastSnapshot) {
-    return { pollMs: streamPollMs(update), snapshot, update: null };
+
+  const meta = await loadActiveRunAndMeta(projectId);
+  let runEvents: ProjectStreamRunEvent[] = [];
+  const activeRun = meta.activeRun;
+  if (activeRun && (activeRun.status === "queued" || activeRun.status === "running")) {
+    const sameRun = cursor.activeRunId === activeRun.id;
+    const fromSeq = sameRun ? cursor.lastRunEventSeq : -1;
+    const ev = await query<RunEventRow>(
+      `SELECT seq, event_class, tool_name, payload
+       FROM run_events WHERE run_id = $1 AND seq > $2
+       ORDER BY seq ASC
+       LIMIT 200`,
+      [activeRun.id, fromSeq],
+    );
+    runEvents = ev.rows.map((row) => ({
+      ...row,
+      summary: summarizeRunEvent(row),
+    }));
   }
-  return { pollMs: streamPollMs(update), snapshot, update };
+
+  return {
+    messages: newMessages,
+    activeRun,
+    liveOutput: meta.liveOutput,
+    previewUrl: meta.previewUrl,
+    runEvents,
+    sandbox: meta.sandbox,
+    previewWake: meta.previewWake,
+  };
+}
+
+function streamBusy(update: ProjectStreamUpdate): boolean {
+  return (
+    update.activeRun?.status === "queued" ||
+    update.activeRun?.status === "running" ||
+    update.previewWake != null
+  );
+}
+
+/** Slow poll interval when no NOTIFY (safety net). */
+export function streamFallbackPollMs(update: ProjectStreamUpdate): number {
+  return streamBusy(update) ? 2000 : 15_000;
 }
