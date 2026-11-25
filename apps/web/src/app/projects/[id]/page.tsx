@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useProjectStream } from "@/hooks/useProjectStream";
 import { useParams } from "next/navigation";
 import { ActivityRail } from "@/components/ActivityRail";
 import { ChatMessage } from "@/components/ChatMessage";
@@ -11,16 +12,6 @@ import { isActivityChipEvent } from "@/lib/run-events";
 import { shouldHideThinkingLoader, THINKING_DELAY_MS } from "@/lib/run-thinking";
 import { useSandboxWake } from "@/hooks/useSandboxWake";
 import { isSandboxStackReady, usesVercelRemoteStack } from "@/lib/sandbox-wake";
-
-type Message = { id: string; role: string; content: string };
-
-type RunEvent = {
-  seq: number;
-  event_class: string;
-  tool_name: string | null;
-  summary: string;
-  payload?: Record<string, unknown>;
-};
 
 type SandboxInfo = {
   preview_url: string | null;
@@ -40,17 +31,23 @@ export default function ProjectPage() {
   const params = useParams();
   const id = String(params.id);
   const [tab, setTab] = useState<"chat" | "preview">("chat");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [sandbox, setSandbox] = useState<SandboxInfo>(null);
-  const [activeStatus, setActiveStatus] = useState<string | null>(null);
+  const {
+    messages,
+    setMessages,
+    runEvents,
+    previewUrl,
+    setPreviewUrl,
+    sandbox,
+    setSandbox,
+    activeStatus,
+    setActiveStatus,
+    previewWaking,
+    liveOutput,
+  } = useProjectStream(id);
   const [text, setText] = useState("");
   const [activityOpen, setActivityOpen] = useState(true);
   const [copiedPreview, setCopiedPreview] = useState(false);
-  const [previewWaking, setPreviewWaking] = useState(false);
   const [sendPending, setSendPending] = useState(false);
-  const [liveOutput, setLiveOutput] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [thinkingVisible, setThinkingVisible] = useState(false);
   const activityEndRef = useRef<HTMLDivElement | null>(null);
@@ -76,24 +73,7 @@ export default function ProjectPage() {
         }
       });
 
-    const es = new EventSource(`/api/projects/${id}/stream`);
-    es.addEventListener("update", (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data);
-      setMessages(data.messages ?? []);
-      setActiveStatus(data.activeRun?.status ?? null);
-      setRunEvents(data.runEvents ?? []);
-      if (data.previewUrl) setPreviewUrl(data.previewUrl);
-      if (data.sandbox) setSandbox(data.sandbox);
-      const wake = data.previewWake as { status?: string } | null | undefined;
-      setPreviewWaking(Boolean(wake && (wake.status === "queued" || wake.status === "running")));
-      setLiveOutput(
-        data.activeRun?.status === "running" && data.liveOutput
-          ? String(data.liveOutput)
-          : null,
-      );
-    });
-    return () => es.close();
-  }, [id]);
+  }, [id, setPreviewUrl, setSandbox]);
 
   const busy =
     sendPending || activeStatus === "queued" || activeStatus === "running";

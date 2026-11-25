@@ -29,6 +29,11 @@ from worker.agent_constants import (
     PREVIEW_PORT,
     REMOTE_WORKDIR,
 )
+from worker.vercel_snapshot_retention import (
+    ensure_sandbox_snapshot_retention,
+    prune_sandbox_snapshots,
+    snapshot_retention_policy,
+)
 
 SKIP_DIRS = {"node_modules", ".git", "dist", ".next"}
 MAX_FILE_BYTES = 2_000_000
@@ -50,6 +55,9 @@ def connect_sandbox(
     project_id: str,
     base_snapshot_id: str | None = None,
     initial_idle_seconds: int | None = None,
+    snapshot_retention_count: int = 1,
+    snapshot_delete_evicted: bool = True,
+    prune_extra_snapshots: bool = True,
 ) -> tuple[SyncSandboxClient, object, bool]:
     """Return (client, sandbox, created). ``name`` must match ``^[a-zA-Z0-9_-]+$``."""
 
@@ -72,7 +80,27 @@ def connect_sandbox(
     idle = initial_idle_seconds or 0
     if idle > 0:
         create_kwargs["execution_time_limit"] = timedelta(seconds=idle)
+    retention = snapshot_retention_policy(
+        count=snapshot_retention_count,
+        delete_evicted=snapshot_delete_evicted,
+    )
+    create_kwargs["snapshot_retention"] = retention
     sandbox, created = client.get_or_create_sandbox(**create_kwargs)  # type: ignore[arg-type]
+    ensure_sandbox_snapshot_retention(
+        sandbox,
+        count=snapshot_retention_count,
+        delete_evicted=snapshot_delete_evicted,
+    )
+    if prune_extra_snapshots:
+        preserve = frozenset({base_snapshot_id}) if base_snapshot_id else frozenset()
+        current = getattr(sandbox, "current_snapshot_id", None)
+        prune_sandbox_snapshots(
+            client,
+            sandbox_name=name,
+            keep=snapshot_retention_count,
+            preserve_ids=preserve,
+            current_snapshot_id=str(current) if current else None,
+        )
     if base_snapshot_id and created:
         logger.info(
             "Vercel sandbox %s created from golden snapshot %s",
@@ -359,6 +387,9 @@ class VercelSandboxSession:
         base_snapshot_id: str | None = None,
         idle_seconds: int = 600,
         extend_when_remaining_seconds: int = 300,
+        max_session_seconds: int = 2700,
+        snapshot_retention_count: int = 1,
+        snapshot_delete_evicted: bool = True,
     ) -> None:
         self.api_name = api_name
         self.token = token
@@ -368,6 +399,9 @@ class VercelSandboxSession:
         self.base_snapshot_id = base_snapshot_id
         self.idle_seconds = idle_seconds
         self.extend_when_remaining_seconds = extend_when_remaining_seconds
+        self.max_session_seconds = max_session_seconds
+        self.snapshot_retention_count = snapshot_retention_count
+        self.snapshot_delete_evicted = snapshot_delete_evicted
         self._client: SyncSandboxClient | None = None
         self._sandbox: object | None = None
         self._created: bool = False
@@ -391,6 +425,8 @@ class VercelSandboxSession:
                 project_id=self.project_id,
                 base_snapshot_id=self.base_snapshot_id,
                 initial_idle_seconds=self.idle_seconds,
+                snapshot_retention_count=self.snapshot_retention_count,
+                snapshot_delete_evicted=self.snapshot_delete_evicted,
             )
             self._golden_fresh = bool(self._created and self.base_snapshot_id)
             logger.info(
@@ -530,6 +566,7 @@ class VercelSandboxSession:
             idle_seconds=self.idle_seconds,
             when_remaining_below=self.extend_when_remaining_seconds,
             force=force,
+            max_session_seconds=self.max_session_seconds,
         )
 
     def stop_persistent(self) -> bool:

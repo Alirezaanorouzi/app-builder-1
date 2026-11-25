@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from vercel.sandbox._internal.models import SnapshotSource
+from vercel.sandbox._internal.models import SnapshotRetention, SnapshotSource
 
 from worker.workspace.vercel_sync import connect_sandbox
 
@@ -24,3 +24,6 @@ def test_connect_passes_snapshot_source_on_create(mock_client_cls: MagicMock) ->
     assert kwargs["source"].snapshot_id == "snap_abc123"
     assert kwargs["persistent"] is True
     assert kwargs["resume"] is True
+    assert isinstance(kwargs["snapshot_retention"], SnapshotRetention)
+    assert kwargs["snapshot_retention"].count == 1
+    assert kwargs["snapshot_retention"].delete_evicted is True

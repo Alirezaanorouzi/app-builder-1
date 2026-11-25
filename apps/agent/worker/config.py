@@ -34,6 +34,9 @@ class Settings:
     sandbox_provider: str
     sandbox_idle_seconds: int
     sandbox_extend_when_remaining_seconds: int
+    vercel_sandbox_max_session_seconds: int
+    vercel_snapshot_retention_count: int
+    vercel_snapshot_delete_evicted: bool
     run_event_max_bytes: int
     openhands_sdk_version: str
     liara_api_key: str
@@ -99,6 +102,17 @@ class Settings:
             sandbox_extend_when_remaining_seconds=int(
                 os.environ.get("SANDBOX_EXTEND_WHEN_REMAINING_SECONDS", "300")
             ),
+            vercel_sandbox_max_session_seconds=int(
+                os.environ.get("VERCEL_SANDBOX_MAX_SESSION_SECONDS", "2700")
+            ),
+            vercel_snapshot_retention_count=int(
+                os.environ.get("VERCEL_SNAPSHOT_RETENTION_COUNT", "1")
+            ),
+            vercel_snapshot_delete_evicted=os.environ.get(
+                "VERCEL_SNAPSHOT_DELETE_EVICTED", "1"
+            )
+            .lower()
+            in ("1", "true", "yes"),
             run_event_max_bytes=int(os.environ.get("RUN_EVENT_MAX_BYTES", "65536")),
             openhands_sdk_version=os.environ.get("OPENHANDS_SDK_VERSION", "1.63.1"),
             liara_api_key=os.environ.get("LIARA_API_KEY", ""),

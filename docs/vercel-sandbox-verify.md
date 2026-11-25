@@ -41,7 +41,7 @@ Do **not** call `snapshot()` mid-run (it stops the session); use it only for the
 Complete against the **pinned** Python `vercel` package before production.
 
 - [x] **Session extend:** `SyncSandbox.extend_execution_time_limit(timedelta)` (see `worker/vercel_lease.py`).
-- [ ] **Snapshot retention:** create with `count=1, delete_evicted=True`; `update(snapshot_retention=…)` on existing sandbox.
+- [x] **Snapshot retention:** `snapshot_retention=SnapshotRetention(count=1, delete_evicted=True)` on create + `sandbox.update`; catch-up `prune_sandbox_snapshots` on connect (`worker/vercel_snapshot_retention.py`).
 - [ ] **Preview hosts:** record real hostname; update `templates/vite-react/vite.config.js` `allowedHosts`.
 - [ ] **Plan limits:** Hobby ~45m session max vs Pro; align `MAX_ITERATIONS` and extend calls.
 

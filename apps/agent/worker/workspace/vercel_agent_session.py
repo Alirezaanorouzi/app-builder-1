@@ -177,6 +177,9 @@ class VercelProjectSession:
                 base_snapshot_id=self.settings.vercel_base_snapshot_id,
                 idle_seconds=self.settings.sandbox_idle_seconds,
                 extend_when_remaining_seconds=self.settings.sandbox_extend_when_remaining_seconds,
+                max_session_seconds=self.settings.vercel_sandbox_max_session_seconds,
+                snapshot_retention_count=self.settings.vercel_snapshot_retention_count,
+                snapshot_delete_evicted=self.settings.vercel_snapshot_delete_evicted,
             )
         return self._sandbox_session
 
