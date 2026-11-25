@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,6 +49,7 @@ def connect_sandbox(
     team_id: str,
     project_id: str,
     base_snapshot_id: str | None = None,
+    initial_idle_seconds: int | None = None,
 ) -> tuple[SyncSandboxClient, object, bool]:
     """Return (client, sandbox, created). ``name`` must match ``^[a-zA-Z0-9_-]+$``."""
 
@@ -67,6 +69,9 @@ def connect_sandbox(
     }
     if base_snapshot_id:
         create_kwargs["source"] = SnapshotSource(snapshot_id=base_snapshot_id)
+    idle = initial_idle_seconds or 0
+    if idle > 0:
+        create_kwargs["execution_time_limit"] = timedelta(seconds=idle)
     sandbox, created = client.get_or_create_sandbox(**create_kwargs)  # type: ignore[arg-type]
     if base_snapshot_id and created:
         logger.info(
@@ -352,6 +357,8 @@ class VercelSandboxSession:
         project_id: str,
         local_root: Path,
         base_snapshot_id: str | None = None,
+        idle_seconds: int = 600,
+        extend_when_remaining_seconds: int = 300,
     ) -> None:
         self.api_name = api_name
         self.token = token
@@ -359,6 +366,8 @@ class VercelSandboxSession:
         self.project_id = project_id
         self.local_root = local_root
         self.base_snapshot_id = base_snapshot_id
+        self.idle_seconds = idle_seconds
+        self.extend_when_remaining_seconds = extend_when_remaining_seconds
         self._client: SyncSandboxClient | None = None
         self._sandbox: object | None = None
         self._created: bool = False
@@ -381,6 +390,7 @@ class VercelSandboxSession:
                 team_id=self.team_id,
                 project_id=self.project_id,
                 base_snapshot_id=self.base_snapshot_id,
+                initial_idle_seconds=self.idle_seconds,
             )
             self._golden_fresh = bool(self._created and self.base_snapshot_id)
             logger.info(
@@ -508,6 +518,19 @@ class VercelSandboxSession:
         except Exception:
             logger.exception("Vercel mid-run sync failed for %s", self.api_name)
             return False
+
+    def extend_idle_deadline(self, *, force: bool = False) -> bool:
+        """Refresh Vercel execution deadline (worker does not call sandbox.stop() for idle)."""
+        from worker.vercel_lease import extend_sandbox_idle_deadline
+
+        if not self._connect() or self._sandbox is None:
+            return False
+        return extend_sandbox_idle_deadline(
+            self._sandbox,
+            idle_seconds=self.idle_seconds,
+            when_remaining_below=self.extend_when_remaining_seconds,
+            force=force,
+        )
 
     def stop_persistent(self) -> bool:
         """Stop the VM session; persistent sandboxes auto-snapshot on stop."""

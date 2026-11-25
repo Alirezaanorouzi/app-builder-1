@@ -175,6 +175,8 @@ class VercelProjectSession:
                 project_id=self.settings.vercel_project_id or "",
                 local_root=staging,
                 base_snapshot_id=self.settings.vercel_base_snapshot_id,
+                idle_seconds=self.settings.sandbox_idle_seconds,
+                extend_when_remaining_seconds=self.settings.sandbox_extend_when_remaining_seconds,
             )
         return self._sandbox_session
 
@@ -321,11 +323,18 @@ class VercelProjectSession:
             if callable(close):
                 close()
 
-    def stop_idle(self) -> bool:
+    def extend_idle_deadline(self, *, force: bool = False) -> bool:
         session = self._sandbox_session
         if session is None:
+            opened = self._open()
+            session = opened
+        if session is None:
             return False
-        return session.stop_persistent()
+        return session.extend_idle_deadline(force=force)
+
+    def stop_idle(self) -> bool:
+        """No-op: Vercel stops the VM at execution deadline (see vercel_lease)."""
+        return False
 
     def close(self) -> None:
         if self._sandbox_session is not None:

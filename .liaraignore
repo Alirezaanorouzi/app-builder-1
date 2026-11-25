@@ -1,0 +1,16 @@
+.git
+.cursor
+data
+**/.next
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.env
+.env.*
+*.log
+coverage
+dist
+agent-tools
+agent-transcripts

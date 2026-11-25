@@ -106,6 +106,19 @@ def warn_liara_models_misconfigured(settings: "Settings") -> None:
 def liara_user_error_message(exc: BaseException, *, liara_model: str) -> str:
     text = str(exc)
     lower = text.lower()
+    if "410 gone" in lower or "polling failed with http 410" in lower:
+        return (
+            "اتصال agent روی sandbox Vercel وسط کار قطع شد (سرور agent ریستارت یا خاموش شد).\n\n"
+            "این خطا مربوط به LLM proxy نیست؛ مدل لیارا تا لحظهٔ قطع کار می‌کرد.\n"
+            "یک بار دیگر همان درخواست را بفرستید. اگر تکرار شد، چند دقیقه صبر کنید و دوباره امتحان کنید.\n\n"
+            f"جزئیات: {text[:500]}"
+        )
+    if "502 bad gateway" in lower and "vercel.run" in lower:
+        return (
+            "sandbox Vercel لحظه‌ای در دسترس نبود (502). معمولاً موقت است.\n"
+            "دوباره پیام را ارسال کنید.\n\n"
+            f"جزئیات: {text[:500]}"
+        )
     if "balance must be higher" in lower or "tomans" in lower:
         return (
             f"اعتبار کیف پول لیارا برای مدل «{liara_model}» کافی نیست. "

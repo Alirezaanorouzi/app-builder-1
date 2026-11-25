@@ -1,0 +1,37 @@
+# Agent worker — build from repo root: docker build -f deploy/Dockerfile.worker .
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    OPENHANDS_SUPPRESS_BANNER=1 \
+    LITELLM_LOG=ERROR \
+    PYTHONPATH=/app/apps/agent:/app/packages/archive \
+    TEMPLATES_DIR=/app/templates \
+    CONVERSATION_DIR=/app/data/conversations \
+    ARCHIVE_LOCAL_DIR=/app/data/archives \
+    WORKSPACE_STAGING_DIR=/app/data/workspace-staging \
+    HEALTH_HTTP_PORT=8080
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY packages/archive /app/packages/archive
+COPY apps/agent /app/apps/agent
+COPY templates /app/templates
+COPY db/migrations /app/db/migrations
+
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install -e /app/packages/archive \
+    && pip install -e "/app/apps/agent[dev]"
+
+RUN mkdir -p /app/data/conversations /app/data/archives /app/data/workspace-staging
+
+WORKDIR /app/apps/agent
+
+EXPOSE 8080
+
+CMD ["python", "-m", "worker"]

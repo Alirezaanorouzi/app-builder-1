@@ -14,6 +14,7 @@ def _settings(**overrides) -> Settings:
         "deploy_env": "dev",
         "sandbox_provider": "vercel",
         "sandbox_idle_seconds": 60,
+        "sandbox_extend_when_remaining_seconds": 30,
         "run_event_max_bytes": 4096,
         "openhands_sdk_version": "1.63.1",
         "liara_api_key": "",

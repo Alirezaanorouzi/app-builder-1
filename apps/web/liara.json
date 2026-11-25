@@ -1,0 +1,8 @@
+{
+  "app": "appbuilder1-web",
+  "platform": "next",
+  "port": 3000,
+  "next": {
+    "mirror": true
+  }
+}

@@ -8,7 +8,9 @@ export type RunEventRow = {
 const INTERNAL_RUN_EVENTS = new Set(["RunTimelineEvent"]);
 
 /** Worker UX markers — not shown in the activity chip rail. */
-export function isActivityChipEvent(row: RunEventRow): boolean {
+export function isActivityChipEvent(
+  row: Pick<RunEventRow, "event_class">,
+): boolean {
   return !INTERNAL_RUN_EVENTS.has(row.event_class);
 }
 

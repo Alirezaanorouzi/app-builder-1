@@ -72,7 +72,6 @@ class Worker:
         while not self._shutdown.is_set():
             try:
                 fail_stale_runs_with_remote_teardown(self.settings, self.db)
-                self._idle_sandbox_sweep()
                 active = sum(1 for _ in self._active)
                 slots = max(0, self.settings.worker_concurrency - active)
                 claimed: list[dict] = []
@@ -108,23 +107,22 @@ class Worker:
         except Exception:
             logger.exception("preview wake job failed")
 
-    def _idle_sandbox_sweep(self) -> None:
-        if self.settings.sandbox_provider != "vercel":
-            return
-        for row in self.db.sandboxes_due_idle_stop(self.settings.sandbox_idle_seconds):
-            ws = build_workspace(self.settings, str(row["project_id"]))
-            ws.stop_idle()
-            self.db.set_sandbox_status(uuid.UUID(str(row["id"])), "stopped", "idle")
-
     def _execute_run(self, row: dict) -> None:
         run_id = uuid.UUID(str(row["id"]))
         project_id = uuid.UUID(str(row["project_id"]))
         stop = self._active.get(run_id)
         hb_stop = threading.Event()
 
+        ws = None
+
         def _heartbeat_loop() -> None:
             while not hb_stop.wait(20):
                 self.db.touch_heartbeat(run_id)
+                if isinstance(ws, VercelWorkspace):
+                    try:
+                        ws.extend_vercel_idle_deadline()
+                    except Exception:
+                        logger.debug("Vercel lease extend on heartbeat failed", exc_info=True)
 
         hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True, name=f"hb-{run_id}")
         hb_thread.start()
@@ -168,6 +166,7 @@ class Worker:
                         timeline=timeline,
                     )
                     persist_vercel_stack(self.db, project_id, ws, stack)
+                    ws.extend_vercel_idle_deadline(force=True)
                     timeline.mark("sandbox_vite_bootstrap")
                 except Exception:
                     logger.exception("Vercel stack ensure failed for %s", project_id)
@@ -233,6 +232,11 @@ class Worker:
             )
             self.db.finish_run(run_id, "failed", error=str(e))
         finally:
+            if isinstance(ws, VercelWorkspace):
+                try:
+                    ws.extend_vercel_idle_deadline(force=True)
+                except Exception:
+                    logger.debug("Vercel post-run lease extend failed", exc_info=True)
             hb_stop.set()
             self._active.pop(run_id, None)
 

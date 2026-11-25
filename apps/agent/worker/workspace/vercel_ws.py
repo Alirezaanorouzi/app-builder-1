@@ -11,7 +11,7 @@ from worker.workspace.local import LocalWorkspace
 from worker.workspace.vercel_agent_session import VercelProjectSession
 from worker.workspace.vercel_names import vercel_sandbox_api_name, vercel_sandbox_display_name
 from worker.sandbox_project_lock import project_sandbox_lock
-from worker.workspace.vercel_sync import VercelSandboxSession, stop_persistent_sandbox
+from worker.workspace.vercel_sync import VercelSandboxSession
 
 _SYNC_DEBOUNCE_SEC = 25
 
@@ -200,6 +200,8 @@ class VercelWorkspace(WorkspaceAdapter):
                 project_id=self.settings.vercel_project_id or "",
                 local_root=self._staging.root,
                 base_snapshot_id=self.settings.vercel_base_snapshot_id,
+                idle_seconds=self.settings.sandbox_idle_seconds,
+                extend_when_remaining_seconds=self.settings.sandbox_extend_when_remaining_seconds,
             )
         return self._legacy_session
 
@@ -321,25 +323,16 @@ class VercelWorkspace(WorkspaceAdapter):
         self._legacy_session = None
         return self._preview, self._external_id
 
-    def stop_idle(self) -> None:
-        token = self.settings.vercel_token
-        team_id = self.settings.vercel_team_id
-        project_id = self.settings.vercel_project_id
+    def extend_vercel_idle_deadline(self, *, force: bool = False) -> bool:
+        """Keep Vercel session alive until execution deadline (no worker stop sweep)."""
         if self._session is not None:
-            self._session.stop_idle()
-            self._session.close()
-            self._session = None
+            return self._session.extend_idle_deadline(force=force)
         if self._legacy_session is not None:
-            self._legacy_session.stop_persistent()
-            self._legacy_session.close()
-            self._legacy_session = None
-        elif token and team_id and project_id:
-            stop_persistent_sandbox(
-                name=self.api_name,
-                token=token,
-                team_id=team_id,
-                project_id=project_id,
-            )
+            return self._legacy_session.extend_idle_deadline(force=force)
+        return False
+
+    def stop_idle(self) -> None:
+        """No-op for Vercel — idle shutdown is Vercel execution_time_limit only."""
 
     def external_sandbox_id(self) -> str | None:
         return self._external_id

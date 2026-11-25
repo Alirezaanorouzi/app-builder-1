@@ -33,6 +33,7 @@ class Settings:
     deploy_env: str
     sandbox_provider: str
     sandbox_idle_seconds: int
+    sandbox_extend_when_remaining_seconds: int
     run_event_max_bytes: int
     openhands_sdk_version: str
     liara_api_key: str
@@ -94,7 +95,10 @@ class Settings:
             poll_seconds=float(os.environ.get("WORKER_POLL_SECONDS", "1")),
             deploy_env=os.environ.get("DEPLOY_ENV", "dev"),
             sandbox_provider=os.environ.get("SANDBOX_PROVIDER", "local").lower(),
-            sandbox_idle_seconds=int(os.environ.get("SANDBOX_IDLE_SECONDS", "300")),
+            sandbox_idle_seconds=int(os.environ.get("SANDBOX_IDLE_SECONDS", "600")),
+            sandbox_extend_when_remaining_seconds=int(
+                os.environ.get("SANDBOX_EXTEND_WHEN_REMAINING_SECONDS", "300")
+            ),
             run_event_max_bytes=int(os.environ.get("RUN_EVENT_MAX_BYTES", "65536")),
             openhands_sdk_version=os.environ.get("OPENHANDS_SDK_VERSION", "1.63.1"),
             liara_api_key=os.environ.get("LIARA_API_KEY", ""),

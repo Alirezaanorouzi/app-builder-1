@@ -42,6 +42,7 @@ def execute_preview_wake(
                 wait_wake_sec=0.0,
             )
             persist_vercel_stack(db, project_id, ws, stack)
+            ws.extend_vercel_idle_deadline(force=True)
             preview = stack.preview_url
             external_id = stack.external_id
             provider = "vercel"

@@ -9,7 +9,7 @@
    Seeds `templates/vite-react`, runs `npm install`, calls `snapshot(expiration=0)`. Copy the printed ID into root `.env` as `VERCEL_BASE_SNAPSHOT_ID`.
 2. **Per project (first create):** worker calls `get_or_create_sandbox(..., source=SnapshotSource(snapshot_id=...), persistent=True)`.
 3. **During agent work:** staging tree uploads (no `node_modules`); extra packages via `npm install` on the VM only.
-4. **Idle (~5 min):** `_idle_sandbox_sweep` → `sandbox.stop()` (persistent auto-snapshot on stop).
+4. **Idle:** Vercel ends the session at `execution_time_limit`; worker calls `extend_execution_time_limit` from the run heartbeat (no global `stop()` sweep).
 5. **Resume:** `get_or_create_sandbox(..., resume=True)` restores files; worker re-uploads deltas, **restarts Vite**, waits for HTTP before returning the preview URL.
 
 Do **not** call `snapshot()` mid-run (it stops the session); use it only for the base image or manual checkpoints.
@@ -40,7 +40,7 @@ Do **not** call `snapshot()` mid-run (it stops the session); use it only for the
 
 Complete against the **pinned** Python `vercel` package before production.
 
-- [ ] **Session extend:** find method name (`extend_timeout`, `extend_execution_time_limit`, or JS `extendTimeout` equivalent).
+- [x] **Session extend:** `SyncSandbox.extend_execution_time_limit(timedelta)` (see `worker/vercel_lease.py`).
 - [ ] **Snapshot retention:** create with `count=1, delete_evicted=True`; `update(snapshot_retention=…)` on existing sandbox.
 - [ ] **Preview hosts:** record real hostname; update `templates/vite-react/vite.config.js` `allowedHosts`.
 - [ ] **Plan limits:** Hobby ~45m session max vs Pro; align `MAX_ITERATIONS` and extend calls.

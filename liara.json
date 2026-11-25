@@ -1,0 +1,14 @@
+{
+  "app": "appbuilder1-worker",
+  "platform": "docker",
+  "port": 8080,
+  "build": {
+    "dockerfile": "deploy/Dockerfile.worker"
+  },
+  "disks": [
+    {
+      "name": "data",
+      "mountTo": "/app/data"
+    }
+  ]
+}

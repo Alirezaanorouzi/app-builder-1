@@ -318,6 +318,7 @@ class Database:
             )
 
     def sandboxes_due_idle_stop(self, idle_seconds: int) -> list[dict[str, Any]]:
+        """Legacy worker idle stop query (Vercel uses execution_time_limit + extend instead)."""
         with self.conn() as c:
             return c.execute(
                 """
