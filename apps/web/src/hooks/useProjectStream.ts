@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectStreamUpdate } from "@/lib/project-stream-snapshot";
 
-/** Rotate SSE before typical Liara / reverse-proxy ~300s HTTP limits. */
-const STREAM_ROTATE_MS = 240_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
-/** If a run is active and no event arrived, fall back to JSON snapshot. */
-const STALE_BUSY_MS = 35_000;
+/** If a run is active and no content frame arrived, fall back to JSON snapshot. */
+const STALE_BUSY_MS = 12_000;
 const SNAPSHOT_POLL_MS = 4_000;
 
 type Message = { id: string; role: string; content: string };
@@ -16,7 +14,6 @@ type RunEvent = {
   event_class: string;
   tool_name: string | null;
   summary: string;
-  payload?: Record<string, unknown>;
 };
 
 type SandboxInfo = {
@@ -57,6 +54,30 @@ function applyStreamPayload(
   );
 }
 
+function mergeDelta(
+  prevMessages: Message[],
+  prevEvents: RunEvent[],
+  prevRunId: string | null,
+  delta: ProjectStreamUpdate,
+): { messages: Message[]; runEvents: RunEvent[]; runId: string | null } {
+  const seenMsg = new Set(prevMessages.map((m) => m.id));
+  const messages = [...prevMessages];
+  for (const m of delta.messages ?? []) {
+    if (!seenMsg.has(m.id)) messages.push(m);
+  }
+  const nextRunId = delta.activeRun?.id ?? prevRunId;
+  const runChanged = Boolean(nextRunId && prevRunId && nextRunId !== prevRunId);
+  let runEvents = prevEvents;
+  if (runChanged) {
+    runEvents = delta.runEvents ?? [];
+  } else if (delta.runEvents?.length) {
+    const seenSeq = new Set(prevEvents.map((e) => e.seq));
+    const appended = delta.runEvents.filter((e) => !seenSeq.has(e.seq));
+    if (appended.length) runEvents = [...prevEvents, ...appended];
+  }
+  return { messages: messages.slice(-50), runEvents, runId: nextRunId };
+}
+
 export function useProjectStream(projectId: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
@@ -67,11 +88,14 @@ export function useProjectStream(projectId: string) {
   const [liveOutput, setLiveOutput] = useState<string | null>(null);
 
   const busyRef = useRef(false);
-  const lastEventAtRef = useRef(Date.now());
+  const lastContentAtRef = useRef(Date.now());
+  const messagesRef = useRef(messages);
+  const eventsRef = useRef(runEvents);
+  const runIdRef = useRef<string | null>(null);
+  messagesRef.current = messages;
+  eventsRef.current = runEvents;
   const reconnectDelayRef = useRef(RECONNECT_BASE_MS);
   const esRef = useRef<EventSource | null>(null);
-  const rotateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const staleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unmountedRef = useRef(false);
 
   const streamSetters = {
@@ -84,15 +108,40 @@ export function useProjectStream(projectId: string) {
     setLiveOutput,
   };
 
-  const touchStream = useCallback(() => {
-    lastEventAtRef.current = Date.now();
+  const noteContent = useCallback(() => {
+    lastContentAtRef.current = Date.now();
     reconnectDelayRef.current = RECONNECT_BASE_MS;
   }, []);
 
-  const applyUpdate = useCallback(
+  const applyMeta = useCallback((data: ProjectStreamUpdate) => {
+    const busy =
+      data.activeRun?.status === "queued" ||
+      data.activeRun?.status === "running" ||
+      Boolean(
+        data.previewWake &&
+          (data.previewWake.status === "queued" || data.previewWake.status === "running"),
+      );
+    busyRef.current = busy;
+    setActiveStatus(data.activeRun?.status ?? null);
+    if (data.previewUrl) setPreviewUrl(data.previewUrl);
+    if (data.sandbox) setSandbox(data.sandbox);
+    const wake = data.previewWake;
+    setPreviewWaking(
+      Boolean(wake && (wake.status === "queued" || wake.status === "running")),
+    );
+    setLiveOutput(
+      data.activeRun?.status === "running" && data.liveOutput
+        ? String(data.liveOutput)
+        : null,
+    );
+  }, []);
+
+  const applySnapshot = useCallback(
     (data: ProjectStreamUpdate) => {
-      touchStream();
-      const busy =
+      noteContent();
+      runIdRef.current = data.activeRun?.id ?? null;
+      applyStreamPayload(data, streamSetters);
+      busyRef.current =
         data.activeRun?.status === "queued" ||
         data.activeRun?.status === "running" ||
         Boolean(
@@ -100,12 +149,25 @@ export function useProjectStream(projectId: string) {
             (data.previewWake.status === "queued" ||
               data.previewWake.status === "running"),
         );
-      busyRef.current = busy;
-      applyStreamPayload(data, streamSetters);
     },
-  // stream setters are stable useState dispatchers
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-    [touchStream],
+    [noteContent],
+  );
+
+  const applyDelta = useCallback(
+    (data: ProjectStreamUpdate) => {
+      noteContent();
+      const merged = mergeDelta(
+        messagesRef.current,
+        eventsRef.current,
+        runIdRef.current,
+        data,
+      );
+      runIdRef.current = merged.runId;
+      setMessages(merged.messages);
+      setRunEvents(merged.runEvents);
+      applyMeta(data);
+    },
+    [noteContent, applyMeta],
   );
 
   const fetchSnapshot = useCallback(async () => {
@@ -113,38 +175,23 @@ export function useProjectStream(projectId: string) {
       const res = await fetch(`/api/projects/${projectId}/snapshot`);
       if (!res.ok) return;
       const data = (await res.json()) as ProjectStreamUpdate;
-      applyUpdate(data);
+      applySnapshot(data);
     } catch {
       /* ignore */
     }
-  }, [projectId, applyUpdate]);
+  }, [projectId, applySnapshot]);
 
   useEffect(() => {
     unmountedRef.current = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const clearRotate = () => {
-      if (rotateTimerRef.current) {
-        clearTimeout(rotateTimerRef.current);
-        rotateTimerRef.current = null;
-      }
-    };
-
     const closeEs = () => {
-      clearRotate();
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
+      const es = esRef.current;
+      esRef.current = null;
+      if (es) {
+        es.onerror = null;
+        es.close();
       }
-    };
-
-    const scheduleRotate = () => {
-      clearRotate();
-      rotateTimerRef.current = setTimeout(() => {
-        if (unmountedRef.current) return;
-        closeEs();
-        openStream();
-      }, STREAM_ROTATE_MS);
     };
 
     const scheduleReconnect = () => {
@@ -162,17 +209,14 @@ export function useProjectStream(projectId: string) {
       closeEs();
       const es = new EventSource(`/api/projects/${projectId}/stream`);
       esRef.current = es;
-      es.addEventListener("update", (ev) => {
+      es.addEventListener("snapshot", (ev) => {
         const data = JSON.parse((ev as MessageEvent).data) as ProjectStreamUpdate;
-        applyUpdate(data);
+        applySnapshot(data);
       });
-      es.addEventListener("ping", () => {
-        touchStream();
+      es.addEventListener("delta", (ev) => {
+        const data = JSON.parse((ev as MessageEvent).data) as ProjectStreamUpdate;
+        applyDelta(data);
       });
-      es.onopen = () => {
-        touchStream();
-        scheduleRotate();
-      };
       es.onerror = () => {
         scheduleReconnect();
       };
@@ -180,19 +224,19 @@ export function useProjectStream(projectId: string) {
 
     openStream();
 
-    staleTimerRef.current = setInterval(() => {
+    const staleTimer = setInterval(() => {
       if (!busyRef.current) return;
-      if (Date.now() - lastEventAtRef.current < STALE_BUSY_MS) return;
+      if (Date.now() - lastContentAtRef.current < STALE_BUSY_MS) return;
       void fetchSnapshot();
     }, SNAPSHOT_POLL_MS);
 
     return () => {
       unmountedRef.current = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (staleTimerRef.current) clearInterval(staleTimerRef.current);
+      clearInterval(staleTimer);
       closeEs();
     };
-  }, [projectId, applyUpdate, touchStream, fetchSnapshot]);
+  }, [projectId, applySnapshot, applyDelta, fetchSnapshot]);
 
   return {
     messages,

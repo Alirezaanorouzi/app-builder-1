@@ -21,16 +21,7 @@ function Get-LiaraCliAuthArgs {
           break
         }
       }
-      if (-not $token) {
-        $keys = @(Get-Content $envFile | Where-Object { $_ -match "^LIARA_API_KEY=" })
-        foreach ($line in $keys) {
-          $candidate = ($line -split "=", 2)[1].Trim()
-          if ($candidate.Length -gt 80 -or $candidate -match "eyJ") {
-            $token = $candidate
-            break
-          }
-        }
-      }
+      # Do not use LIARA_API_KEY (Liara AI) — it is not a deploy CLI token.
     }
   }
 

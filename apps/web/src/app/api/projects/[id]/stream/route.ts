@@ -7,6 +7,7 @@ import {
   loadProjectStreamSnapshot,
   mergeProjectStreamUpdates,
   PROJECT_STREAM_NOTIFY_CHANNEL,
+  streamDeltaChanged,
   streamFallbackPollMs,
   type ProjectStreamCursor,
   type ProjectStreamUpdate,
@@ -48,16 +49,17 @@ export async function GET(
         return;
       }
       let cursor: ProjectStreamCursor = cursorFromSnapshot(state);
-      send("update", state);
+      send("snapshot", state);
 
       const pushDelta = async () => {
-        if (closed) return;
+        if (closed || !state) return;
         try {
           const delta = await loadProjectStreamDelta(projectId, userId, cursor);
-          if (!delta) return;
-          state = mergeProjectStreamUpdates(state!, delta);
+          if (!delta || !streamDeltaChanged(state, delta)) return;
+          const prev = state;
+          state = mergeProjectStreamUpdates(prev, delta);
           cursor = cursorFromSnapshot(state);
-          send("update", state);
+          send("delta", delta);
         } catch {
           /* next notify or fallback will retry */
         }

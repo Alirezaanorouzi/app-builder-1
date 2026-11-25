@@ -15,7 +15,42 @@ export type ProjectStreamActiveRun = {
   live_output: string | null;
 } | undefined;
 
-export type ProjectStreamRunEvent = RunEventRow & { summary: string };
+export type ProjectStreamRunEvent = {
+  seq: number;
+  event_class: string;
+  tool_name: string | null;
+  summary: string;
+};
+
+function toWireEvent(row: RunEventRow): ProjectStreamRunEvent {
+  return {
+    seq: row.seq,
+    event_class: row.event_class,
+    tool_name: row.tool_name,
+    summary: summarizeRunEvent(row),
+  };
+}
+
+/** True when a delta should be pushed. Avoids resending an unchanged full history. */
+export function streamDeltaChanged(
+  prev: ProjectStreamUpdate,
+  delta: ProjectStreamUpdate,
+): boolean {
+  if (delta.messages.length > 0 || delta.runEvents.length > 0) return true;
+  if ((delta.activeRun?.id ?? null) !== (prev.activeRun?.id ?? null)) return true;
+  if ((delta.activeRun?.status ?? null) !== (prev.activeRun?.status ?? null)) return true;
+  if ((delta.liveOutput ?? null) !== (prev.liveOutput ?? null)) return true;
+  if ((delta.previewUrl ?? null) !== (prev.previewUrl ?? null)) return true;
+  if ((delta.previewWake?.id ?? null) !== (prev.previewWake?.id ?? null)) return true;
+  if ((delta.previewWake?.status ?? null) !== (prev.previewWake?.status ?? null)) return true;
+  if ((delta.sandbox?.preview_url ?? null) !== (prev.sandbox?.preview_url ?? null)) return true;
+  if ((delta.sandbox?.status ?? null) !== (prev.sandbox?.status ?? null)) return true;
+  if ((delta.sandbox?.agent_server_status ?? null) !== (prev.sandbox?.agent_server_status ?? null))
+    return true;
+  if ((delta.sandbox?.session_expires_at ?? null) !== (prev.sandbox?.session_expires_at ?? null))
+    return true;
+  return false;
+}
 
 export type ProjectStreamSandbox = {
   preview_url: string | null;
@@ -172,10 +207,7 @@ export async function loadProjectStreamSnapshot(
        ORDER BY seq ASC`,
       [activeRun.id],
     );
-    runEvents = ev.rows.map((row) => ({
-      ...row,
-      summary: summarizeRunEvent(row),
-    }));
+    runEvents = ev.rows.map((row) => toWireEvent(row));
   }
 
   return {
@@ -234,10 +266,7 @@ export async function loadProjectStreamDelta(
        LIMIT 200`,
       [activeRun.id, fromSeq],
     );
-    runEvents = ev.rows.map((row) => ({
-      ...row,
-      summary: summarizeRunEvent(row),
-    }));
+    runEvents = ev.rows.map((row) => toWireEvent(row));
   }
 
   return {
