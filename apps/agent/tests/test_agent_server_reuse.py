@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
+from worker.agent_constants import AGENT_SERVER_KILL_AFTER_SECONDS
 from worker.config import Settings
-from worker.workspace.vercel_agent_session import VercelProjectSession
+from worker.workspace.vercel_agent_session import VercelProjectSession, spawn_agent_and_vite
 
 
 def _minimal_settings() -> Settings:
@@ -69,3 +71,18 @@ def test_session_mismatch_spawns_without_prior_ready(
     assert sha == "sha"
     mock_spawn.assert_called_once()
     assert mock_ready.call_args.kwargs.get("timeout") == 1.5
+
+
+def test_spawn_detaches_agent_and_vite() -> None:
+    sandbox = MagicMock()
+    spawn_agent_and_vite(sandbox, {"OH_SECRET_KEY": "x"})
+    sandbox.run_command.assert_not_called()
+    assert sandbox.create_command.call_count == 2
+    scripts = [call.kwargs["args"][1] for call in sandbox.create_command.call_args_list]
+    assert any("exec python .openhands/agent_server_entry.py" in s for s in scripts)
+    assert any("exec nice npm run dev" in s for s in scripts)
+    for call in sandbox.create_command.call_args_list:
+        assert call.kwargs["kill_after"] == AGENT_SERVER_KILL_AFTER_SECONDS
+        assert call.kwargs["stdout"] is subprocess.DEVNULL
+        assert "setsid" not in call.kwargs["args"][1]
+        assert "nohup" not in call.kwargs["args"][1]

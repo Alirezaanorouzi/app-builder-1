@@ -33,6 +33,7 @@ class RunHeartbeat:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._extend: Callable[[], None] | None = None
+        self._extend_busy = threading.Lock()
 
     def set_lease_extend(self, fn: Callable[[], None] | None) -> None:
         self._extend = fn
@@ -44,12 +45,27 @@ class RunHeartbeat:
         def _loop() -> None:
             self._db.touch_heartbeat(self._run_id)
             while not self._stop.wait(self._poll_sec):
+                # Touch before any lease work. A connect that waits on the
+                # project lock must not delay the next beat (that is how a
+                # stuck spawn becomes "heartbeat lost").
                 self._db.touch_heartbeat(self._run_id)
-                if self._extend is not None:
+                extend = self._extend
+                if extend is None or not self._extend_busy.acquire(blocking=False):
+                    continue
+
+                def _run_extend(fn: Callable[[], None] = extend) -> None:
                     try:
-                        self._extend()
+                        fn()
                     except Exception:
                         logger.debug("lease extend on heartbeat failed", exc_info=True)
+                    finally:
+                        self._extend_busy.release()
+
+                threading.Thread(
+                    target=_run_extend,
+                    name=f"lease-{self._run_id}",
+                    daemon=True,
+                ).start()
 
         self._thread = threading.Thread(
             target=_loop,

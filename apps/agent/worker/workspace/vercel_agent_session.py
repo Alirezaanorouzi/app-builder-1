@@ -7,6 +7,7 @@ import hashlib
 import logging
 import secrets
 import shlex
+import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Iterator
 from uuid import UUID
 
 from worker.agent_constants import (
+    AGENT_SERVER_KILL_AFTER_SECONDS,
     AGENT_SERVER_PORT,
     PREVIEW_PORT,
     REMOTE_WORKDIR,
@@ -96,24 +98,53 @@ def _agent_server_env(
 
 
 def spawn_agent_and_vite(sandbox: object, env: dict[str, str]) -> None:
-    """One shell starts the agent (logged) and a niced Vite. Both stay up after the shell exits."""
-    exports = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
-    script = (
+    """Start the agent and Vite as tracked commands that outlive this API call.
+
+    ``run_command`` waits until the command's process group exits. A shell that
+    backgrounds both servers never finishes, so the worker holds the project
+    lock, stops heartbeating, and the run is failed as "heartbeat lost" before
+    ``/ready`` is ever polled. ``create_command`` returns immediately and Vercel
+    keeps each process until ``kill_after``.
+    """
+    agent_script = (
         f"cd {shlex.quote(REMOTE_WORKDIR)} && mkdir -p .openhands && "
-        f"export {exports} && "
-        f"setsid nohup python {_AGENT_ENTRY_REMOTE} --host 0.0.0.0 --port {AGENT_SERVER_PORT} "
-        f">/tmp/agent-server.log 2>&1 </dev/null & "
-        f"setsid nohup nice npm run dev -- --host 0.0.0.0 --port {PREVIEW_PORT} "
-        f">/tmp/vite.log 2>&1 </dev/null & "
-        f"exit 0"
+        f"exec python {_AGENT_ENTRY_REMOTE} --host 0.0.0.0 --port {AGENT_SERVER_PORT} "
+        f">>/tmp/agent-server.log 2>&1"
     )
-    sandbox.run_command(  # type: ignore[attr-defined]
-        "bash",
-        args=["-lc", script],
-        cwd=REMOTE_WORKDIR,
-        capture_output=True,
+    vite_script = (
+        f"cd {shlex.quote(REMOTE_WORKDIR)} && "
+        f"exec nice npm run dev -- --host 0.0.0.0 --port {PREVIEW_PORT} "
+        f">>/tmp/vite.log 2>&1"
     )
-    logger.info("Spawned agent server and Vite in one shell")
+    common = {
+        "cwd": REMOTE_WORKDIR,
+        "env": env,
+        "kill_after": AGENT_SERVER_KILL_AFTER_SECONDS,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    sandbox.create_command("bash", args=["-lc", agent_script], **common)  # type: ignore[attr-defined]
+    sandbox.create_command("bash", args=["-lc", vite_script], **common)  # type: ignore[attr-defined]
+    logger.info("Spawned agent server and Vite as detached commands")
+
+
+def tail_remote_log(sandbox: object, path: str, *, lines: int = 40) -> str:
+    """Best-effort last lines of a VM log. Used when /ready never succeeds."""
+    try:
+        result = sandbox.run_command(  # type: ignore[attr-defined]
+            "bash",
+            args=["-lc", f"tail -n {int(lines)} {shlex.quote(path)}"],
+            cwd=REMOTE_WORKDIR,
+            capture_output=True,
+            kill_after=8,
+        )
+    except Exception:
+        logger.debug("could not read %s", path, exc_info=True)
+        return ""
+    out = getattr(result, "stdout", b"") or b""
+    if isinstance(out, bytes):
+        out = out.decode("utf-8", errors="replace")
+    return str(out)[-2000:]
 
 
 class VercelProjectSession:
@@ -271,7 +302,12 @@ class VercelProjectSession:
             self._agent_status = "failed"
             return None, self._agent_status, current_id, entry_sha
         if not self._wait_public_ready(public):
-            logger.warning("Agent Server public /ready failed for %s", public)
+            log_tail = tail_remote_log(sandbox, "/tmp/agent-server.log")
+            logger.warning(
+                "Agent Server public /ready failed for %s\n%s",
+                public,
+                log_tail or "(no agent-server log)",
+            )
             self._agent_status = "failed"
             return None, self._agent_status, current_id, entry_sha
         if on_ready is not None:
