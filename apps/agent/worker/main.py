@@ -164,7 +164,7 @@ class Worker:
         queue_wait_ms = float(row.get("queue_wait_ms") or 0)
         timeline = RunTimeline(run_id, queue_wait_ms=queue_wait_ms)
         timeline.mark("claimed")
-        self._progress(run_id, "در حال آماده‌سازی محیط…")
+        self._progress(run_id, "در حال آماده‌سازی sandbox…")
         mint_handle: MintHandle | None = None
         if self.settings.uses_remote_agent():
             liara_model = pick_allowed_model(

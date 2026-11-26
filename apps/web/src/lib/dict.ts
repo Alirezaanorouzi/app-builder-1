@@ -15,11 +15,13 @@ export const fa = {
   thinking: "در حال فکر کردن…",
   running: "در حال ساخت…",
   previewEmpty: "پس از اولین اجرا پیش‌نمایش اینجا نمایش داده می‌شود",
-  previewPendingVercel: "در حال آماده‌سازی محیط… پس از آماده شدن لینک اینجا می‌آید",
-  previewWaking: "در حال آماده‌سازی محیط…",
-  sandboxWarming: "در حال فعال سازی محیط",
+  previewPendingVercel:
+    "در حال بالا آوردن Vercel Sandbox… پس از آماده شدن لینک اینجا می‌آید",
+  previewWaking:
+    "در حال آماده‌سازی sandbox (Vite و Agent Server)…",
+  sandboxWarming: "sandbox هنوز آماده نیست.",
   sandboxWarmingHint: "با ارسال پیام روشن می‌شود.",
-  sandboxWarmingComposer: "محیط هنوز آماده نیست. پیام را بفرستید تا روشن شود.",
+  sandboxWarmingComposer: "sandbox هنوز آماده نیست. پیام را بفرستید تا روشن شود.",
   previewLocal: "پیش‌نمایش محلی (Vite روی این سیستم)",
   previewVercel: "پیش‌نمایش Vercel Sandbox",
   previewOpenLink: "باز کردن در تب جدید",

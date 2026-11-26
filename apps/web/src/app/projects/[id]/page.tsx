@@ -260,12 +260,14 @@ export default function ProjectPage() {
           </section>
         ) : previewUrl ? (
           <section className="preview-pane">
-            <iframe
-              className="preview"
-              title="preview"
-              src={previewUrl}
-              sandbox="allow-scripts allow-same-origin"
-            />
+            <div className="preview-device">
+              <iframe
+                className="preview"
+                title="preview"
+                src={previewUrl}
+                sandbox="allow-scripts allow-same-origin"
+              />
+            </div>
             <div className="preview-url-bar">
               <a
                 className="preview-url-text"

@@ -20,22 +20,8 @@ export function isActivityChipEvent(
 
 const CHIP_MAX_LEN = 80;
 
-/** Hide infrastructure words. People see a step, not the runtime. */
-function plainStep(text: string): string {
-  return text
-    .replace(/vercel\s+sandbox/gi, "محیط")
-    .replace(/agent\s+server/gi, "")
-    .replace(/\bvite\b/gi, "")
-    .replace(/sandbox/gi, "محیط")
-    .replace(/سندباکس/g, "محیط")
-    .replace(/\(\s*(?:و\s*)?\)/g, "")
-    .replace(/\s{2,}/g, " ")
-    .replace(/\s+([.…،])/g, "$1")
-    .trim();
-}
-
 function clip(text: string, max = CHIP_MAX_LEN): string {
-  const t = plainStep(text);
+  const t = text.trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1)}…`;
 }
@@ -112,7 +98,7 @@ function actionEventLabel(row: RunEventRow): string {
   if (tool === "task_tracker") return "برنامه‌ریزی کارها";
   if (tool) return clip(tool);
 
-  return "در حال کار";
+  return "اقدام agent";
 }
 
 /** Longer hint for chip hover (optional). */
@@ -126,7 +112,7 @@ export function runEventTooltip(row: RunEventRow): string | undefined {
   const rc = payload?.reasoning_content;
   if (typeof rc === "string" && rc.trim()) parts.push(rc.trim());
   if (!parts.length) return undefined;
-  const merged = plainStep(parts.join("\n\n"));
+  const merged = parts.join("\n\n");
   return merged.length > 500 ? `${merged.slice(0, 497)}…` : merged;
 }
 
@@ -146,12 +132,12 @@ export function summarizeRunEvent(row: RunEventRow): string {
 
   if (cls === "RunBootstrapEvent") {
     const s = sdkSummary(row.payload);
-    return s ? clip(s) : "در حال آماده‌سازی محیط";
+    return s ? clip(s) : "آماده‌سازی agent";
   }
   if (cls === "MessageEvent") {
     const src = row.payload?.source;
-    if (src === "user") return "پیام شما";
-    if (src === "agent") return "در حال نوشتن پاسخ";
+    if (src === "user") return "پیام کاربر";
+    if (src === "agent") return "پاسخ agent";
     return "پیام";
   }
   if (cls.endsWith("Action")) return `اقدام · ${cls.replace(/Action$/, "")}`;
