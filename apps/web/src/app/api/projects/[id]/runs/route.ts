@@ -30,16 +30,22 @@ export async function POST(
 
   try {
     const run = await query<{ id: string }>(
-      `INSERT INTO agent_runs (project_id, user_id, model, status)
-       VALUES ($1, $2, $3, 'queued') RETURNING id`,
-      [projectId, userId, model],
+      `WITH run AS (
+         INSERT INTO agent_runs (project_id, user_id, model, status)
+         VALUES ($1, $2, $3, 'queued')
+         RETURNING id
+       ),
+       msg AS (
+         INSERT INTO messages (project_id, run_id, role, content)
+         SELECT $1, run.id, 'user', $4 FROM run
+       ),
+       touch AS (
+         UPDATE sandboxes SET last_active_at = now() WHERE project_id = $1
+       )
+       SELECT id FROM run`,
+      [projectId, userId, model, content],
     );
     const runId = run.rows[0].id;
-    await query(
-      `INSERT INTO messages (project_id, run_id, role, content) VALUES ($1, $2, 'user', $3)`,
-      [projectId, runId, content],
-    );
-    await query(`UPDATE sandboxes SET last_active_at = now() WHERE project_id = $1`, [projectId]);
     return NextResponse.json({ runId });
   } catch (e: unknown) {
     const err = e as { code?: string };

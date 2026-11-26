@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
+from worker.session_expiry import measured_session_deadline, stored_lease_is_fresh
 from worker.vercel_lease import (
     max_extend_headroom,
     runtime_session_remaining_seconds,
@@ -90,3 +91,18 @@ def test_runtime_session_remaining():
     rem = runtime_session_remaining_seconds(s)
     assert rem is not None
     assert 520 < rem < 560
+
+
+def test_measured_deadline_is_started_plus_capped_limit():
+    now_ms = 1_700_000_000_000
+    session = _FakeSession(now_ms, timedelta(seconds=5000))
+    deadline = measured_session_deadline(session, max_session_seconds=2700)
+    assert deadline == datetime.fromtimestamp(now_ms / 1000.0 + 2700, tz=timezone.utc)
+
+
+def test_stored_lease_fresh_uses_real_deadline():
+    future = datetime.now(timezone.utc) + timedelta(seconds=400)
+    assert stored_lease_is_fresh(future, renew_when_remaining_below=300) is True
+    soon = datetime.now(timezone.utc) + timedelta(seconds=100)
+    assert stored_lease_is_fresh(soon, renew_when_remaining_below=300) is False
+    assert stored_lease_is_fresh(None, renew_when_remaining_below=300) is False

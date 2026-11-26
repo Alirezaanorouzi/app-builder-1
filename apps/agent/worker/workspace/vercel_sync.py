@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import threading
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,10 +43,86 @@ MAX_FILES_PER_SYNC = 400
 PREVIEW_WAIT_SECONDS = 120
 # Vercel API: process timeout (ms) must be <= 18_000_000 (~5h)
 VITE_KILL_AFTER_SECONDS = 18_000
+# Statuses where get_or_create(resume=True) actually wakes a stopped VM.
+# A running sandbox must not re-exec long-lived processes.
+_RESUME_STATUSES = frozenset({"stopped", "stopping", "failed", "aborted"})
+
+SandboxHook = Callable[[object], None]
+_RETENTION_EVERY_SEC = 6 * 3600
+_retention_at: dict[str, float] = {}
+_retention_lock = threading.Lock()
+_client_local = threading.local()
+
+
+def reset_thread_sandbox_clients() -> None:
+    """Drop this thread's cached Vercel clients (tests)."""
+    if hasattr(_client_local, "clients"):
+        del _client_local.clients
+
+
+def reset_retention_schedule() -> None:
+    with _retention_lock:
+        _retention_at.clear()
+
+
+def _thread_sandbox_client(token: str, team_id: str, project_id: str) -> SyncSandboxClient:
+    """One client per worker thread. Do not close it from a sandbox session."""
+    clients = getattr(_client_local, "clients", None)
+    if clients is None:
+        clients = {}
+        _client_local.clients = clients
+    key = (token, team_id, project_id)
+    client = clients.get(key)
+    if client is None:
+
+        def factory() -> SandboxCredentials:
+            return _credentials(token, team_id, project_id)
+
+        client = SyncSandboxClient.create(
+            options=SyncSandboxServiceOptions(credentials_factory=factory),
+        )
+        clients[key] = client
+    return client
+
+
+def _retention_due(name: str, *, created: bool) -> bool:
+    if created:
+        return True
+    with _retention_lock:
+        last = _retention_at.get(name, 0.0)
+    return (time.monotonic() - last) >= _RETENTION_EVERY_SEC
+
+
+def _mark_retention(name: str) -> None:
+    with _retention_lock:
+        _retention_at[name] = time.monotonic()
+
+
+def log_sandbox_resources(sandbox: object, name: str) -> None:
+    logger.info(
+        "Sandbox %s vcpus=%s memory=%s",
+        name,
+        getattr(sandbox, "vcpus", None),
+        getattr(sandbox, "memory", None),
+    )
 
 
 def _credentials(token: str, team_id: str, project_id: str) -> SandboxCredentials:
     return SandboxCredentials(token=token, team_id=team_id, project_id=project_id)
+
+
+def _prior_sandbox_status(client: SyncSandboxClient, name: str) -> str | None:
+    """Status before resume. ``None`` when the named sandbox does not exist yet."""
+    try:
+        existing = client.get_sandbox(name=name)
+    except Exception:
+        return None
+    raw = getattr(existing, "status", None)
+    if raw is None:
+        return None
+    value = getattr(raw, "value", raw)
+    text = str(value).strip().lower()
+    return text or None
 
 
 def connect_sandbox(
@@ -58,15 +136,19 @@ def connect_sandbox(
     snapshot_retention_count: int = 1,
     snapshot_delete_evicted: bool = True,
     prune_extra_snapshots: bool = True,
+    on_create: SandboxHook | None = None,
+    on_resume: SandboxHook | None = None,
+    on_retention: SandboxHook | None = None,
 ) -> tuple[SyncSandboxClient, object, bool]:
-    """Return (client, sandbox, created). ``name`` must match ``^[a-zA-Z0-9_-]+$``."""
+    """Return (client, sandbox, created). ``name`` must match ``^[a-zA-Z0-9_-]+$``.
 
-    def factory() -> SandboxCredentials:
-        return _credentials(token, team_id, project_id)
+    Python SDK has no ``on_create`` / ``on_resume`` arguments. These callbacks
+    match the JS ``Sandbox.getOrCreate`` contract: ``on_create`` runs only when
+    this call creates the VM, ``on_resume`` only when a stopped VM is woken.
+    An already-running sandbox skips both.
+    """
 
-    client = SyncSandboxClient.create(
-        options=SyncSandboxServiceOptions(credentials_factory=factory),
-    )
+    client = _thread_sandbox_client(token, team_id, project_id)
     create_kwargs: dict[str, object] = {
         "name": name,
         "persistent": True,
@@ -85,22 +167,43 @@ def connect_sandbox(
         delete_evicted=snapshot_delete_evicted,
     )
     create_kwargs["snapshot_retention"] = retention
+    # Status lookup is only for optional hooks. The hot path uses the stored session id.
+    prior_status = _prior_sandbox_status(client, name) if (on_create or on_resume) else None
     sandbox, created = client.get_or_create_sandbox(**create_kwargs)  # type: ignore[arg-type]
-    ensure_sandbox_snapshot_retention(
-        sandbox,
-        count=snapshot_retention_count,
-        delete_evicted=snapshot_delete_evicted,
-    )
-    if prune_extra_snapshots:
-        preserve = frozenset({base_snapshot_id}) if base_snapshot_id else frozenset()
-        current = getattr(sandbox, "current_snapshot_id", None)
-        prune_sandbox_snapshots(
-            client,
-            sandbox_name=name,
-            keep=snapshot_retention_count,
-            preserve_ids=preserve,
-            current_snapshot_id=str(current) if current else None,
+    log_sandbox_resources(sandbox, name)
+    if created:
+        if on_create is not None:
+            logger.info("Sandbox %s created — running on_create", name)
+            on_create(sandbox)
+    elif prior_status in _RESUME_STATUSES:
+        if on_resume is not None:
+            logger.info("Sandbox %s resumed from %s — running on_resume", name, prior_status)
+            on_resume(sandbox)
+    else:
+        logger.info(
+            "Sandbox %s already running (prior=%s); skip on_create/on_resume",
+            name,
+            prior_status or "unknown",
         )
+    if _retention_due(name, created=created):
+        ensure_sandbox_snapshot_retention(
+            sandbox,
+            count=snapshot_retention_count,
+            delete_evicted=snapshot_delete_evicted,
+        )
+        if prune_extra_snapshots:
+            preserve = frozenset({base_snapshot_id}) if base_snapshot_id else frozenset()
+            current = getattr(sandbox, "current_snapshot_id", None)
+            prune_sandbox_snapshots(
+                client,
+                sandbox_name=name,
+                keep=snapshot_retention_count,
+                preserve_ids=preserve,
+                current_snapshot_id=str(current) if current else None,
+            )
+        _mark_retention(name)
+        if on_retention is not None:
+            on_retention(sandbox)
     if base_snapshot_id and created:
         logger.info(
             "Vercel sandbox %s created from golden snapshot %s",
@@ -250,12 +353,6 @@ def _start_vite_dev_server(sandbox: object) -> None:
     if _wait_vite_http(sandbox, timeout_sec=4.0):
         logger.info("Vercel sandbox: Vite already listening on %s, skip restart", PREVIEW_PORT)
         return
-    sandbox.run_command(  # type: ignore[attr-defined]
-        "bash",
-        args=["-lc", "pkill -f '[v]ite' 2>/dev/null || true"],
-        cwd=REMOTE_WORKDIR,
-        capture_output=True,
-    )
     env = {"PORT": str(PREVIEW_PORT), "HOST": "0.0.0.0"}
     create_cmd = getattr(sandbox, "create_command", None)
     if callable(create_cmd):
@@ -405,6 +502,9 @@ class VercelSandboxSession:
         self.max_session_seconds = max_session_seconds
         self.snapshot_retention_count = snapshot_retention_count
         self.snapshot_delete_evicted = snapshot_delete_evicted
+        self.on_create: SandboxHook | None = None
+        self.on_resume: SandboxHook | None = None
+        self.on_retention: SandboxHook | None = None
         self._client: SyncSandboxClient | None = None
         self._sandbox: object | None = None
         self._created: bool = False
@@ -430,6 +530,9 @@ class VercelSandboxSession:
                 initial_idle_seconds=self.idle_seconds,
                 snapshot_retention_count=self.snapshot_retention_count,
                 snapshot_delete_evicted=self.snapshot_delete_evicted,
+                on_create=self.on_create,
+                on_resume=self.on_resume,
+                on_retention=self.on_retention,
             )
             self._golden_fresh = bool(self._created and self.base_snapshot_id)
             logger.info(
@@ -591,11 +694,8 @@ class VercelSandboxSession:
         )
 
     def close(self) -> None:
-        if self._client is not None:
-            try:
-                self._client.close()
-            except Exception:
-                pass
+        # The client is thread-local and reused by later runs. Closing it here
+        # would drop the HTTP session out from under other projects on this thread.
         self._client = None
         self._sandbox = None
 

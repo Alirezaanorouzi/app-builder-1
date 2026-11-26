@@ -16,6 +16,7 @@ LOG_PREFIX = "RUN_TIMELINE"
 @dataclass
 class RunTimeline:
     run_id: uuid.UUID
+    queue_wait_ms: float = 0.0
     t0: float | None = None
     marks: list[tuple[str, float]] = field(default_factory=list)
     _seen: set[str] = field(default_factory=set)
@@ -34,37 +35,47 @@ class RunTimeline:
         now = time.perf_counter()
         self.marks.append((phase, now))
         assert self.t0 is not None
-        prev = self.marks[-2][1] if len(self.marks) > 1 else self.t0
+        total = self._total_ms(now)
+        if len(self.marks) > 1:
+            prev_total = self._total_ms(self.marks[-2][1])
+        else:
+            prev_total = 0.0
         logger.info(
-            "%s run=%s phase=%s total_ms=%.0f step_ms=%.0f",
+            "%s run=%s phase=%s total_ms=%.0f step_ms=%.0f queue_wait_ms=%.0f",
             LOG_PREFIX,
             self.run_id,
             phase,
-            (now - self.t0) * 1000,
-            (now - prev) * 1000,
+            total,
+            total - prev_total,
+            self.queue_wait_ms,
         )
         return now
+
+    def _total_ms(self, now: float) -> float:
+        assert self.t0 is not None
+        return self.queue_wait_ms + (now - self.t0) * 1000
 
     def elapsed_ms(self, phase: str) -> float:
         assert self.t0 is not None
         for name, t in self.marks:
             if name == phase:
-                return (t - self.t0) * 1000
+                return self._total_ms(t)
         return -1.0
 
     def phases_payload(self) -> list[dict[str, Any]]:
         assert self.t0 is not None
         out: list[dict[str, Any]] = []
-        prev = self.t0
+        prev_total = 0.0
         for name, t in self.marks:
+            total = self._total_ms(t)
             out.append(
                 {
                     "phase": name,
-                    "total_ms": round((t - self.t0) * 1000),
-                    "step_ms": round((t - prev) * 1000),
+                    "total_ms": round(total),
+                    "step_ms": round(total - prev_total),
                 }
             )
-            prev = t
+            prev_total = total
         return out
 
     def log_summary(self) -> None:

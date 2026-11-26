@@ -6,24 +6,24 @@ import base64
 import hashlib
 import logging
 import secrets
-import subprocess
+import shlex
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Iterator
 from uuid import UUID
 
 from worker.agent_constants import (
-    AGENT_SERVER_KILL_AFTER_SECONDS,
     AGENT_SERVER_PORT,
+    PREVIEW_PORT,
     REMOTE_WORKDIR,
 )
-from worker.agent_server_client import health_ok, ready_ok
+from worker.agent_server_client import ready_ok
 from worker.config import Settings
 from worker.workspace.vercel_names import vercel_sandbox_api_name, vercel_sandbox_display_name
 from worker.workspace.vercel_sync import (
     VercelSandboxSession,
-    _command_rc,
     agent_server_url_from_sandbox,
     preview_url_from_sandbox,
     reload_sandbox_routes,
@@ -37,17 +37,36 @@ logger = logging.getLogger(__name__)
 _AGENT_ENTRY_REMOTE = ".openhands/agent_server_entry.py"
 
 
-def _ensure_agent_server_entry_on_vm(sandbox: object, settings: Settings) -> None:
-    """Ship capped Agent Server entrypoint into the persistent VM workspace."""
+def local_agent_entry_sha() -> str | None:
     local = Path(__file__).with_name("agent_server_entry.py")
     if not local.is_file():
-        return
+        return None
+    return hashlib.sha256(local.read_bytes()).hexdigest()
+
+
+def _ensure_agent_server_entry_on_vm(
+    sandbox: object,
+    settings: Settings,
+    *,
+    stored_sha: str | None,
+    force: bool,
+) -> str | None:
+    """Upload the entry file only when its hash differs from the last upload."""
+    del settings
+    local = Path(__file__).with_name("agent_server_entry.py")
+    if not local.is_file():
+        return stored_sha
+    data = local.read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    if not force and stored_sha == sha:
+        return sha
     fs = getattr(sandbox, "fs", None)
     if fs is None:
-        return
-    data = local.read_bytes()
+        return sha
     with fs.batch(cwd=REMOTE_WORKDIR) as batch:
         batch.write_bytes(_AGENT_ENTRY_REMOTE, data)
+    logger.info("Uploaded agent server entry sha=%s", sha[:12])
+    return sha
 
 
 def _derive_session_api_key(settings: Settings, project_id: str) -> str:
@@ -76,84 +95,25 @@ def _agent_server_env(
     }
 
 
-def _stop_agent_server_process(sandbox: object) -> None:
+def spawn_agent_and_vite(sandbox: object, env: dict[str, str]) -> None:
+    """One shell starts the agent (logged) and a niced Vite. Both stay up after the shell exits."""
+    exports = " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
+    script = (
+        f"cd {shlex.quote(REMOTE_WORKDIR)} && mkdir -p .openhands && "
+        f"export {exports} && "
+        f"setsid nohup python {_AGENT_ENTRY_REMOTE} --host 0.0.0.0 --port {AGENT_SERVER_PORT} "
+        f">/tmp/agent-server.log 2>&1 </dev/null & "
+        f"setsid nohup nice npm run dev -- --host 0.0.0.0 --port {PREVIEW_PORT} "
+        f">/tmp/vite.log 2>&1 </dev/null & "
+        f"exit 0"
+    )
     sandbox.run_command(  # type: ignore[attr-defined]
         "bash",
-        args=["-lc", "pkill -f '[o]penhands.agent_server' 2>/dev/null || true"],
+        args=["-lc", script],
         cwd=REMOTE_WORKDIR,
         capture_output=True,
     )
-
-
-def _wait_agent_health_on_vm(sandbox: object, *, attempts: int = 30) -> bool:
-    probe = sandbox.run_command(  # type: ignore[attr-defined]
-        "bash",
-        args=[
-            "-lc",
-            (
-                f"for i in $(seq 1 {attempts}); do "
-                f"curl -sf http://127.0.0.1:{AGENT_SERVER_PORT}/ready && exit 0; "
-                f"sleep 2; done; exit 1"
-            ),
-        ],
-        cwd=REMOTE_WORKDIR,
-        capture_output=True,
-        kill_after=90,
-    )
-    return _command_rc(probe) == 0
-
-
-def _start_agent_server_process(
-    sandbox: object,
-    env: dict[str, str],
-    *,
-    settings: Settings | None = None,
-) -> None:
-    if settings is not None:
-        _ensure_agent_server_entry_on_vm(sandbox, settings)
-    _stop_agent_server_process(sandbox)
-    create_cmd = getattr(sandbox, "create_command", None)
-    cmd_args = [
-        _AGENT_ENTRY_REMOTE,
-        "--host",
-        "0.0.0.0",
-        "--port",
-        str(AGENT_SERVER_PORT),
-    ]
-    if callable(create_cmd):
-        try:
-            create_cmd(
-                "python",
-                args=cmd_args,
-                cwd=REMOTE_WORKDIR,
-                env=env,
-                kill_after=AGENT_SERVER_KILL_AFTER_SECONDS,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            logger.info("Agent Server started via create_command on port %s", AGENT_SERVER_PORT)
-            return
-        except Exception as e:
-            logger.warning("create_command for Agent Server failed, using nohup: %s", e)
-    sandbox.run_command(  # type: ignore[attr-defined]
-        "bash",
-        args=[
-            "-lc",
-            (
-                f"cd {REMOTE_WORKDIR} && "
-                f"export OH_SESSION_API_KEYS_0='{env['OH_SESSION_API_KEYS_0']}' "
-                f"OH_SECRET_KEY='{env['OH_SECRET_KEY']}' "
-                f"OH_MAX_CMD_OUTPUT_CHARS='{env.get('OH_MAX_CMD_OUTPUT_CHARS', '12000')}' "
-                f"PORT={AGENT_SERVER_PORT}; "
-                f"pkill -f '[o]penhands.agent_server' 2>/dev/null || true; "
-                f"mkdir -p .openhands; "
-                f"nohup python {_AGENT_ENTRY_REMOTE} --host 0.0.0.0 "
-                f"--port {AGENT_SERVER_PORT} >/tmp/agent-server.log 2>&1 &"
-            ),
-        ],
-        cwd=REMOTE_WORKDIR,
-        capture_output=True,
-    )
+    logger.info("Spawned agent server and Vite in one shell")
 
 
 class VercelProjectSession:
@@ -174,6 +134,8 @@ class VercelProjectSession:
         self._sandbox_session: VercelSandboxSession | None = None
         self._agent_url: str | None = None
         self._agent_status = "starting"
+        self._runtime_session_id: str | None = None
+        self._entry_sha: str | None = None
 
     def seed_agent_url_hint(self, url: str | None) -> None:
         """Last-known public Agent Server URL (verified again before reuse)."""
@@ -225,24 +187,16 @@ class VercelProjectSession:
             http_wait_seconds=float(self.settings.vercel_preview_wait_seconds),
         )
 
-    def _reuse_if_ready(self, public: str) -> tuple[str | None, str] | None:
-        """Return (url, status) when an existing Agent Server answers /ready; else None."""
-        public = public.rstrip("/")
-        if self._agent_url == public and self._agent_status == "ready":
-            if ready_ok(public, self.session_api_key, timeout=5.0):
-                return public, "ready"
-        if ready_ok(public, self.session_api_key, timeout=8.0):
-            logger.info("Agent Server already ready at %s (skip restart)", public)
-            self._agent_url = public
-            self._agent_status = "ready"
-            return public, self._agent_status
-        return None
+    def connected_sandbox(self) -> object | None:
+        session = self._sandbox_session
+        if session is None:
+            return None
+        return session._sandbox  # noqa: SLF001
 
-    def _wait_public_ready(self, public: str, *, attempts: int, sleep_s: float) -> bool:
+    def _wait_public_ready(self, public: str, *, attempts: int = 30, sleep_s: float = 0.4) -> bool:
         public = public.rstrip("/")
         for attempt in range(attempts):
-            timeout = 10.0 if attempt == 0 else 15.0
-            if ready_ok(public, self.session_api_key, timeout=timeout):
+            if ready_ok(public, self.session_api_key, timeout=1.5):
                 self._agent_url = public
                 self._agent_status = "ready"
                 return True
@@ -250,62 +204,86 @@ class VercelProjectSession:
                 time.sleep(sleep_s)
         return False
 
-    def ensure_agent_server(self) -> tuple[str | None, str]:
+    def bring_up(
+        self,
+        *,
+        stored_session_id: str | None,
+        stored_entry_sha: str | None,
+        on_connected: Callable[[], None] | None = None,
+        on_spawned: Callable[[], None] | None = None,
+        on_ready: Callable[[], None] | None = None,
+        on_retention: Callable[[], None] | None = None,
+    ) -> tuple[str | None, str, str | None, str | None]:
+        """Connect once. Spawn only when the runtime session changed or /ready fails.
+
+        Returns (agent_url, status, runtime_session_id, entry_sha).
+        """
+        from worker.session_expiry import runtime_session_id
+
         session = self._open()
         if session is None:
             self._agent_status = "failed"
-            return None, self._agent_status
-        if session._sandbox is None:  # noqa: SLF001
-            logger.info(
-                "Sandbox not connected yet; resuming VM for Agent Server (no Vite bootstrap)"
-            )
-            if not session._connect():
-                self._agent_status = "failed"
-                return None, self._agent_status
-        if session._sandbox is None:  # noqa: SLF001
+            return None, self._agent_status, None, stored_entry_sha
+        if on_retention is not None:
+            session.on_retention = lambda _sandbox: on_retention()
+        if session._sandbox is None and not session._connect():  # noqa: SLF001
             self._agent_status = "failed"
-            return None, self._agent_status
+            return None, self._agent_status, None, stored_entry_sha
         sandbox = session._sandbox  # noqa: SLF001
         client = session._client  # noqa: SLF001
-        if client is None:
+        if sandbox is None or client is None:
             self._agent_status = "failed"
-            return None, self._agent_status
-        sandbox = reload_sandbox_routes(client, self.api_name)
-        session._sandbox = sandbox  # noqa: SLF001
-        public = agent_server_url_from_sandbox(sandbox)
-        if not public and self._agent_url:
-            public = self._agent_url
-        if public:
-            reused = self._reuse_if_ready(public)
-            if reused:
-                return reused
-            if _wait_agent_health_on_vm(sandbox, attempts=2):
+            return None, self._agent_status, None, stored_entry_sha
+        if on_connected is not None:
+            on_connected()
+        current_id = runtime_session_id(sandbox)
+        self._runtime_session_id = current_id
+        public = agent_server_url_from_sandbox(sandbox) or self._agent_url
+        same_session = bool(stored_session_id and current_id and stored_session_id == current_id)
+        if same_session and public and ready_ok(public, self.session_api_key, timeout=3.0):
+            self._agent_url = public
+            self._agent_status = "ready"
+            self._entry_sha = stored_entry_sha
+            if on_ready is not None:
+                on_ready()
+            return public, "ready", current_id, stored_entry_sha
+
+        created = bool(getattr(session, "_created", False))
+        entry_sha = _ensure_agent_server_entry_on_vm(
+            sandbox,
+            self.settings,
+            stored_sha=stored_entry_sha,
+            force=created,
+        )
+        self._entry_sha = entry_sha
+        if on_spawned is not None:
+            on_spawned()
+        env = _agent_server_env(self.settings, self.session_api_key)
+        spawn_agent_and_vite(sandbox, env)
+        if not public:
+            try:
                 sandbox = reload_sandbox_routes(client, self.api_name)
                 session._sandbox = sandbox  # noqa: SLF001
-                public = agent_server_url_from_sandbox(sandbox) or public
-                reused = self._reuse_if_ready(public)
-                if reused:
-                    return reused
-
-        logger.info("Agent Server cold start for project %s", self.project_id)
-        env = _agent_server_env(self.settings, self.session_api_key)
-        _start_agent_server_process(sandbox, env, settings=self.settings)
-        time.sleep(1.0)
-        if not _wait_agent_health_on_vm(sandbox):
-            logger.warning("Agent Server did not answer on VM port %s", AGENT_SERVER_PORT)
-            self._agent_status = "failed"
-            return None, self._agent_status
-        sandbox = reload_sandbox_routes(client, self.api_name)
-        session._sandbox = sandbox  # noqa: SLF001
-        public = agent_server_url_from_sandbox(sandbox)
+                public = agent_server_url_from_sandbox(sandbox)
+            except Exception:
+                logger.warning("Route reload after agent spawn failed", exc_info=True)
         if not public:
             self._agent_status = "failed"
-            return None, self._agent_status
-        if not self._wait_public_ready(public, attempts=12, sleep_s=1.5):
+            return None, self._agent_status, current_id, entry_sha
+        if not self._wait_public_ready(public):
             logger.warning("Agent Server public /ready failed for %s", public)
             self._agent_status = "failed"
-            return None, self._agent_status
-        return self._agent_url, self._agent_status
+            return None, self._agent_status, current_id, entry_sha
+        if on_ready is not None:
+            on_ready()
+        return self._agent_url, self._agent_status, current_id, entry_sha
+
+    def ensure_agent_server(self) -> tuple[str | None, str]:
+        url, status, _sid, _sha = self.bring_up(
+            stored_session_id=self._runtime_session_id,
+            stored_entry_sha=self._entry_sha,
+        )
+        return url, status
 
     def agent_server_url(self) -> str | None:
         return self._agent_url

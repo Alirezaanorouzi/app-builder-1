@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import secrets
+import threading
 import uuid
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -112,6 +113,61 @@ def mint_run_llm_credential(
             "Check LLM_PROXY_ADMIN_URL is reachable from the worker."
         ) from e
     return RunLlmCredential(api_key=virtual, base_url=base_url, key_id=key_id)
+
+
+class MintHandle:
+    """Background mint. Join before the model call; revoke if the run never uses the key."""
+
+    def __init__(self, thread: threading.Thread, box: dict[str, object]) -> None:
+        self._thread = thread
+        self._box = box
+        self._revoked = False
+
+    def join(self, timeout: float = 20.0) -> RunLlmCredential:
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            raise TimeoutError("LLM key mint timed out")
+        err = self._box.get("err")
+        if isinstance(err, BaseException):
+            raise err
+        cred = self._box.get("cred")
+        if not isinstance(cred, RunLlmCredential):
+            raise RuntimeError("LLM key mint produced no credential")
+        return cred
+
+    def revoke(self, settings: Settings) -> None:
+        if self._revoked:
+            return
+        self._revoked = True
+        self._thread.join(timeout=5.0)
+        cred = self._box.get("cred")
+        if isinstance(cred, RunLlmCredential):
+            revoke_run_llm_key(settings, cred.key_id)
+
+
+def start_mint_run_llm_credential(
+    settings: Settings,
+    *,
+    run_id: uuid.UUID,
+    project_id: uuid.UUID,
+    model: str,
+) -> MintHandle:
+    box: dict[str, object] = {}
+
+    def _run() -> None:
+        try:
+            box["cred"] = mint_run_llm_credential(
+                settings,
+                run_id=run_id,
+                project_id=project_id,
+                model=model,
+            )
+        except Exception as exc:
+            box["err"] = exc
+
+    thread = threading.Thread(target=_run, name=f"mint-{run_id.hex[:8]}", daemon=True)
+    thread.start()
+    return MintHandle(thread, box)
 
 
 def revoke_run_llm_key(settings: Settings, key_id: str | None) -> None:

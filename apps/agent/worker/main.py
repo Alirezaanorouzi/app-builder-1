@@ -34,7 +34,9 @@ from worker.run_lifecycle import RunHeartbeat  # noqa: E402
 from worker.run_timeline import RunTimeline, prewarm_openhands_sdk  # noqa: E402
 from worker.preview_wake import execute_preview_wake  # noqa: E402
 from worker.sandbox_stack import ensure_vercel_remote_stack, persist_vercel_stack  # noqa: E402
-from worker.session_expiry import record_sandbox_session_expiry  # noqa: E402
+from worker.claim_listen import listen_for_work  # noqa: E402
+from worker.liara_models import pick_allowed_model  # noqa: E402
+from worker.llm_proxy import MintHandle, start_mint_run_llm_credential  # noqa: E402
 from worker.remote_control import (  # noqa: E402
     fail_stale_runs_with_remote_teardown,
     fail_worker_runs_on_startup_with_remote_teardown,
@@ -63,6 +65,7 @@ class Worker:
         self._active_runs: dict[uuid.UUID, threading.Event] = {}
         self._active_wake_projects: set[uuid.UUID] = set()
         self._wake_guard = threading.Lock()
+        self._claim_wake = threading.Event()
         self._run_pool = ThreadPoolExecutor(
             max_workers=self.settings.worker_concurrency,
             thread_name_prefix="run",
@@ -87,6 +90,12 @@ class Worker:
             self.settings.worker_concurrency,
             self.settings.worker_wake_concurrency,
         )
+        threading.Thread(
+            target=listen_for_work,
+            args=(self.settings.database_url, self._claim_wake, self._shutdown),
+            name="claim-listen",
+            daemon=True,
+        ).start()
 
         while not self._shutdown.is_set():
             try:
@@ -123,7 +132,11 @@ class Worker:
                         self._wake_pool.submit(self._execute_wake, row, pid)
             except Exception:
                 logger.exception("claim loop error")
-            self._shutdown.wait(self.settings.poll_seconds)
+            if self._claim_wake.is_set():
+                time.sleep(0.05)
+                self._claim_wake.clear()
+                continue
+            self._claim_wake.wait(self.settings.poll_seconds)
 
         logger.info("Shutting down…")
         for run_id, ev in list(self._active_runs.items()):
@@ -148,14 +161,22 @@ class Worker:
         self.db.mark_run_execution_started(run_id)
 
         ws = None
-        timeline = RunTimeline(run_id)
-        timeline.mark("run_claimed")
-
-        def _touch_session_expiry() -> None:
-            record_sandbox_session_expiry(
-                self.db,
-                project_id,
-                lease_seconds=self.settings.sandbox_idle_seconds,
+        queue_wait_ms = float(row.get("queue_wait_ms") or 0)
+        timeline = RunTimeline(run_id, queue_wait_ms=queue_wait_ms)
+        timeline.mark("claimed")
+        self._progress(run_id, "در حال آماده‌سازی sandbox…")
+        mint_handle: MintHandle | None = None
+        if self.settings.uses_remote_agent():
+            liara_model = pick_allowed_model(
+                row.get("model"),
+                self.settings.liara_default_model,
+                self.settings.liara_models,
+            )
+            mint_handle = start_mint_run_llm_credential(
+                self.settings,
+                run_id=run_id,
+                project_id=project_id,
+                model=liara_model,
             )
 
         try:
@@ -183,6 +204,8 @@ class Worker:
                 return self.db.is_cancel_requested(run_id) or (stop and stop.is_set())
 
             if cancel_check():
+                if mint_handle is not None:
+                    mint_handle.revoke(self.settings)
                 stop_remote_run(self.settings, self.db, row, reason="cancelled")
                 self.db.finish_run(run_id, "cancelled")
                 return
@@ -201,10 +224,11 @@ class Worker:
                     )
                     persist_vercel_stack(self.db, project_id, ws, stack)
                     ws.extend_vercel_idle_deadline(force=True)
-                    _touch_session_expiry()
                     timeline.mark("sandbox_vite_bootstrap")
                 except Exception:
                     logger.exception("Vercel stack ensure failed for %s", project_id)
+                    if mint_handle is not None:
+                        mint_handle.revoke(self.settings)
                     raise
                 if not remote:
                     staging_sync = ws.request_staging_sync
@@ -220,6 +244,7 @@ class Worker:
                 cancel_check=cancel_check,
                 on_staging_sync=staging_sync,
                 timeline=timeline,
+                mint_handle=mint_handle,
             )
             if cancel_check():
                 status = "cancelled"
@@ -244,7 +269,6 @@ class Worker:
                         preview_url=None,
                         external_id=ext_id,
                     )
-                _touch_session_expiry()
             elif self.settings.sandbox_provider == "local":
                 preview = ws.preview_url()
                 if preview:
@@ -260,6 +284,8 @@ class Worker:
             self.db.touch_sandbox_activity(project_id)
         except Exception as e:
             logger.exception("run failed")
+            if mint_handle is not None:
+                mint_handle.revoke(self.settings)
             self.db.insert_message(
                 project_id,
                 run_id,
@@ -271,11 +297,17 @@ class Worker:
             if isinstance(ws, VercelWorkspace):
                 try:
                     ws.extend_vercel_idle_deadline(force=True)
-                    _touch_session_expiry()
                 except Exception:
                     logger.debug("Vercel post-run lease extend failed", exc_info=True)
             heartbeat.stop()
             self._active_runs.pop(run_id, None)
+
+    def _progress(self, run_id: uuid.UUID, summary: str) -> None:
+        try:
+            seq = self.db.next_event_seq(run_id)
+            self.db.insert_run_event(run_id, seq, "RunBootstrapEvent", {"summary": summary})
+        except Exception:
+            logger.debug("progress event failed", exc_info=True)
 
 
 def main() -> None:

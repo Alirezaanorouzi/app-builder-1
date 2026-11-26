@@ -341,10 +341,116 @@ class VercelWorkspace(WorkspaceAdapter):
         self._legacy_session = None
         return self._preview, self._external_id
 
+    def stored_lease_fresh(self) -> bool:
+        if self._db is None:
+            return False
+        import uuid
+
+        from worker.session_expiry import stored_lease_is_fresh
+
+        row = self._db.get_sandbox_row(uuid.UUID(self.project_id))
+        if not row or not row.get("runtime_session_id"):
+            return False
+        expires = row.get("session_expires_at")
+        return stored_lease_is_fresh(
+            expires,
+            renew_when_remaining_below=self.settings.sandbox_extend_when_remaining_seconds,
+        )
+
+    def persist_measured_deadline(self) -> None:
+        if self._db is None or self._session is None:
+            return
+        import uuid
+
+        from worker.session_expiry import record_measured_session_expiry, runtime_session_id
+
+        sandbox = self._session.connected_sandbox()
+        project_id = uuid.UUID(self.project_id)
+        record_measured_session_expiry(
+            self._db,
+            project_id,
+            sandbox,
+            max_session_seconds=self.settings.vercel_sandbox_max_session_seconds,
+        )
+        session_id = runtime_session_id(sandbox)
+        if session_id:
+            self._db.update_sandbox_runtime(project_id, runtime_session_id=session_id)
+
+    def activate_remote_stack(
+        self,
+        *,
+        stored_session_id: str | None,
+        stored_entry_sha: str | None,
+        on_connected=None,
+        on_spawned=None,
+        on_ready=None,
+        on_retention=None,
+        on_resume=None,
+    ) -> tuple[str | None, str | None, str | None, str, str | None, str | None]:
+        """One resume. Returns preview, external id, agent url, status, session id, entry sha."""
+        with self._sandbox_lock():
+            return self._activate_remote_stack_locked(
+                stored_session_id=stored_session_id,
+                stored_entry_sha=stored_entry_sha,
+                on_connected=on_connected,
+                on_spawned=on_spawned,
+                on_ready=on_ready,
+                on_retention=on_retention,
+                on_resume=on_resume,
+            )
+
+    def _activate_remote_stack_locked(
+        self,
+        *,
+        stored_session_id: str | None,
+        stored_entry_sha: str | None,
+        on_connected=None,
+        on_spawned=None,
+        on_ready=None,
+        on_retention=None,
+        on_resume=None,
+    ) -> tuple[str | None, str | None, str | None, str, str | None, str | None]:
+        session = self._open_session()
+        if session is None:
+            return None, None, None, "failed", None, stored_entry_sha
+        if on_resume is not None:
+            on_resume()
+        url, status, runtime_id, entry_sha = session.bring_up(
+            stored_session_id=stored_session_id,
+            stored_entry_sha=stored_entry_sha,
+            on_connected=on_connected,
+            on_spawned=on_spawned,
+            on_ready=on_ready,
+            on_retention=on_retention,
+        )
+        self._agent_url = url
+        sandbox = session.connected_sandbox()
+        from worker.workspace.vercel_sync import preview_url_from_sandbox
+
+        preview = preview_url_from_sandbox(sandbox) if sandbox is not None else None
+        if preview:
+            self._preview = preview
+        external = session.external_sandbox_id()
+        if external:
+            self._external_id = external
+        self.persist_measured_deadline()
+        return self._preview, self._external_id, url, status, runtime_id, entry_sha
+
     def extend_vercel_idle_deadline(self, *, force: bool = False) -> bool:
-        """Keep Vercel session alive until execution deadline (no worker stop sweep)."""
-        if self._session is not None:
-            return self._session.extend_idle_deadline(force=force)
+        """Renew only when the stored real deadline is near. Does not connect otherwise."""
+        if self.stored_lease_fresh():
+            return False
+        with self._sandbox_lock():
+            if self.stored_lease_fresh():
+                return False
+            return self._extend_locked(force=force)
+
+    def _extend_locked(self, *, force: bool) -> bool:
+        session = self._session or self._open_session()
+        if session is not None:
+            ok = session.extend_idle_deadline(force=force)
+            self.persist_measured_deadline()
+            return ok
         if self._legacy_session is not None:
             return self._legacy_session.extend_idle_deadline(force=force)
         return False

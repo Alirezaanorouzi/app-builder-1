@@ -39,13 +39,19 @@ def test_prune_deletes_oldest_only() -> None:
 @patch("worker.workspace.vercel_sync.ensure_sandbox_snapshot_retention", return_value=True)
 @patch("worker.workspace.vercel_sync.prune_sandbox_snapshots", return_value=0)
 @patch("worker.workspace.vercel_sync.SyncSandboxClient")
-def test_connect_applies_retention(
+def test_connect_applies_retention_once_until_interval(
     mock_client_cls: MagicMock,
     _prune: MagicMock,
     _ensure: MagicMock,
 ) -> None:
-    from worker.workspace.vercel_sync import connect_sandbox
+    from worker.workspace.vercel_sync import (
+        connect_sandbox,
+        reset_retention_schedule,
+        reset_thread_sandbox_clients,
+    )
 
+    reset_thread_sandbox_clients()
+    reset_retention_schedule()
     client = MagicMock()
     mock_client_cls.create.return_value = client
     box = MagicMock(current_snapshot_id="snap_live")
@@ -64,3 +70,14 @@ def test_connect_applies_retention(
     _prune.assert_called_once()
     preserve = _prune.call_args.kwargs["preserve_ids"]
     assert "snap_golden" in preserve
+
+    connect_sandbox(
+        name="dev-test",
+        token="t",
+        team_id="team",
+        project_id="prj",
+        base_snapshot_id="snap_golden",
+        snapshot_retention_count=1,
+    )
+    _ensure.assert_called_once()
+    _prune.assert_called_once()

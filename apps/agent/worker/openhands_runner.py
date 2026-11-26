@@ -19,7 +19,7 @@ from worker.liara_models import (
 from worker.persistence_paths import sdk_conversation_dir
 from worker.db import Database
 from worker.events_sanitize import sanitize_event_payload
-from worker.llm_proxy import mint_run_llm_credential, revoke_run_llm_key
+from worker.llm_proxy import MintHandle, mint_run_llm_credential, revoke_run_llm_key
 from worker.workspace.base import WorkspaceAdapter
 from worker.builder_prompt import BUILDER_SYSTEM_PROMPT
 from worker.remote_conversation_sync import ensure_conversation_id_matches_remote_llm
@@ -93,7 +93,7 @@ def seed_fallback(
     new_id = uuid.uuid4()
     db.update_project_conversation(project_id, new_id)
     prior = db.list_prior_messages(project_id)
-    files = ws.glob("**/*")
+    files = db.workspace_manifest(project_id) or ws.glob("**/*")
     summary = "\n".join(f"- {m['role']}: {m['content'][:500]}" for m in prior)
     seed = (
         "Continue the project. Prior chat:\n"
@@ -113,6 +113,7 @@ def run_agent_turn(
     on_assistant_token: Callable[[str], None] | None = None,
     on_staging_sync: Callable[[], None] | None = None,
     timeline: RunTimeline | None = None,
+    mint_handle: MintHandle | None = None,
 ) -> tuple[str, int]:
     project_id = uuid.UUID(str(run_row["project_id"]))
     run_id = uuid.UUID(str(run_row["id"]))
@@ -121,15 +122,19 @@ def run_agent_turn(
         timeline = RunTimeline(run_id)
 
     seed = db.get_run_user_message(run_id) or ""
-    try:
-        restore_conversation_dir(settings, db, archive_store, project_id, conversation_id)
-    except RuntimeError as e:
-        if str(e) == "sdk_version_mismatch":
-            conversation_id, seed = seed_fallback(db, project_id, ws)
-            seed = f"{seed}\n\nUser request: {db.get_run_user_message(run_id) or ''}"
-        else:
-            raise
-    timeline.mark("conversation_restore_done")
+    remote_turn = settings.uses_remote_agent() and isinstance(ws, VercelWorkspace)
+    if remote_turn:
+        timeline.mark("conversation_restore_skipped")
+    else:
+        try:
+            restore_conversation_dir(settings, db, archive_store, project_id, conversation_id)
+        except RuntimeError as e:
+            if str(e) == "sdk_version_mismatch":
+                conversation_id, seed = seed_fallback(db, project_id, ws)
+                seed = f"{seed}\n\nUser request: {db.get_run_user_message(run_id) or ''}"
+            else:
+                raise
+        timeline.mark("conversation_restore_done")
 
     conv_dir = sdk_conversation_dir(settings.conversation_dir, conversation_id)
 
@@ -191,18 +196,14 @@ def run_agent_turn(
     )
     if settings.uses_remote_agent() and isinstance(ws, VercelWorkspace) and not use_remote:
         msg = "Agent Server did not become ready on the Vercel sandbox"
+        if mint_handle is not None:
+            mint_handle.revoke(settings)
         db.insert_message(project_id, run_id, "assistant", msg)
         return "failed", 0
     msg_count = db.count_project_messages(project_id)
-    # Remote Agent Server keeps full tool transcripts in the conversation. Reusing that
-    # history on follow-ups can blow Liara's context limit (HTTP 500 with no clear error).
-    rotate_remote = use_remote and (
-        msg_count > 1
-        or (
-            settings.remote_conversation_rotate_after_messages > 0
-            and msg_count >= settings.remote_conversation_rotate_after_messages
-        )
-    )
+    # Remote Agent Server keeps full tool transcripts. Every follow-up starts a new
+    # conversation so Liara does not see that history. The threshold setting is unused.
+    rotate_remote = use_remote and msg_count > 1
     if rotate_remote:
         conversation_id, rotate_seed = seed_fallback(db, project_id, ws)
         seed = f"{rotate_seed}\n\nUser request: {seed}" if seed else rotate_seed
@@ -214,15 +215,25 @@ def run_agent_turn(
         )
     if use_remote:
         try:
-            llm_credential = mint_run_llm_credential(
-                settings,
-                run_id=run_id,
-                project_id=project_id,
-                model=liara_model,
-            )
+            if mint_handle is not None:
+                llm_credential = mint_handle.join(timeout=20.0)
+            else:
+                llm_credential = mint_run_llm_credential(
+                    settings,
+                    run_id=run_id,
+                    project_id=project_id,
+                    model=liara_model,
+                )
             db.set_run_llm_proxy_key_id(run_id, llm_credential.key_id)
+            timeline.mark("llm_key_minted")
         except RuntimeError as e:
             logger.error("remote LLM credential: %s", e)
+            db.insert_message(project_id, run_id, "assistant", str(e)[:4000])
+            return "failed", 0
+        except TimeoutError as e:
+            logger.error("remote LLM credential: %s", e)
+            if mint_handle is not None:
+                mint_handle.revoke(settings)
             db.insert_message(project_id, run_id, "assistant", str(e)[:4000])
             return "failed", 0
         llm = LLM(
@@ -331,7 +342,7 @@ def run_agent_turn(
         except Exception:
             logger.exception("bootstrap run_event insert failed")
         agent_url = ws.agent_server_url()
-        if agent_url and llm_credential:
+        if agent_url and llm_credential and not rotate_remote:
             conversation_id = ensure_conversation_id_matches_remote_llm(
                 db,
                 project_id,
@@ -353,7 +364,7 @@ def run_agent_turn(
         "workspace": workspace_handle,
         "conversation_id": conversation_id,
         "max_iteration_per_run": settings.max_iterations,
-        "delete_on_close": False,
+        "delete_on_close": bool(use_remote),
         "visualizer": None,
         "callbacks": [on_event],
         "token_callbacks": [on_token],
@@ -465,6 +476,13 @@ def run_agent_turn(
         def _release_remote() -> None:
             if llm_credential:
                 revoke_run_llm_key(settings, llm_credential.key_id)
+            if use_remote:
+                try:
+                    from worker.workspace_manifest import store_workspace_manifest
+
+                    store_workspace_manifest(db, project_id, workspace_handle)
+                except Exception:
+                    logger.debug("workspace manifest failed", exc_info=True)
             if remote_cm is not None:
                 remote_cm.__exit__(None, None, None)
             try:
@@ -493,7 +511,7 @@ def run_agent_turn(
             reply = "انجام شد."
         db.insert_message(project_id, run_id, "assistant", reply[:16000])
     db.finish_run(run_id, final_status, iterations=iterations)
-    releaser.join(timeout=12)
+    releaser.join(timeout=0)
     cancel_mon.stop()
 
     if conv_dir.is_dir() and (conv_dir / "base_state.json").is_file():

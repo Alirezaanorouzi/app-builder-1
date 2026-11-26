@@ -30,6 +30,20 @@ class VercelStackEnsureResult:
     agent_server_status: str | None
     external_id: str | None
     session_api_key: str | None
+    runtime_session_id: str | None = None
+    agent_entry_sha: str | None = None
+
+
+def _progress(db: Database, timeline: RunTimeline | None, summary: str) -> None:
+    if timeline is None:
+        return
+    seq = db.next_event_seq(timeline.run_id)
+    db.insert_run_event(
+        timeline.run_id,
+        seq,
+        "RunBootstrapEvent",
+        {"summary": summary},
+    )
 
 
 def is_db_stack_warm(sb_row: dict[str, Any] | None) -> bool:
@@ -135,19 +149,34 @@ def ensure_vercel_remote_stack(
     if timeline is not None:
         timeline.mark("sandbox_stack_bootstrap_start")
 
-    preview, external_id = ws.wake_preview_only()
+    agent_url: str | None = None
+    agent_status: str | None = None
+    runtime_session_id: str | None = None
+    entry_sha: str | None = None
+    if remote_agent:
+        _progress(db, timeline, "در حال روشن کردن sandbox…")
+
+        def _mark(phase: str) -> None:
+            if timeline is not None:
+                timeline.mark(phase)
+
+        preview, external_id, agent_url, agent_status, runtime_session_id, entry_sha = (
+            ws.activate_remote_stack(
+                stored_session_id=str(sb_row.get("runtime_session_id") or "") or None if sb_row else None,
+                stored_entry_sha=str(sb_row.get("agent_entry_sha") or "") or None if sb_row else None,
+                on_connected=lambda: _mark("sandbox_connected"),
+                on_spawned=lambda: _mark("agent_spawned"),
+                on_ready=lambda: _mark("agent_ready"),
+                on_retention=lambda: _mark("retention_done"),
+            )
+        )
+        if agent_status != "ready":
+            raise RuntimeError(ws.vercel_last_error() or "Agent Server not ready")
+    else:
+        preview, external_id = ws.wake_preview_only()
     if not preview:
         err = ws.vercel_last_error() or "preview URL not available"
         raise RuntimeError(err)
-
-    agent_url: str | None = None
-    agent_status: str | None = None
-    if remote_agent:
-        agent_url, agent_status = ws.ensure_remote_agent_server()
-        if timeline is not None:
-            timeline.mark("agent_server_ready")
-        if agent_status != "ready":
-            raise RuntimeError(ws.vercel_last_error() or "Agent Server not ready")
 
     session = ws.project_session
     result = VercelStackEnsureResult(
@@ -157,6 +186,8 @@ def ensure_vercel_remote_stack(
         agent_server_status=agent_status or (session.agent_server_status() if session else None),
         external_id=external_id or ws.external_sandbox_id(),
         session_api_key=session.session_api_key if session else None,
+        runtime_session_id=runtime_session_id,
+        agent_entry_sha=entry_sha,
     )
     return result
 
@@ -173,3 +204,9 @@ def persist_vercel_stack(db: Database, project_id: uuid.UUID, ws: VercelWorkspac
         agent_session_api_key=result.session_api_key,
         agent_server_status=result.agent_server_status,
     )
+    if result.runtime_session_id or result.agent_entry_sha:
+        db.update_sandbox_runtime(
+            project_id,
+            runtime_session_id=result.runtime_session_id,
+            agent_entry_sha=result.agent_entry_sha,
+        )

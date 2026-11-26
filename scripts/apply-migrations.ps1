@@ -10,7 +10,8 @@ $files = @(
     "db\migrations\0003_sandbox_wake.sql",
     "db\migrations\0004_run_live_stream.sql",
     "db\migrations\0005_run_execution_sandbox_session.sql",
-    "db\migrations\0006_project_stream_notify.sql"
+    "db\migrations\0006_project_stream_notify.sql",
+    "db\migrations\0007_run_queue_sandbox_meta.sql"
 )
 foreach ($rel in $files) {
     $path = Join-Path $Root $rel

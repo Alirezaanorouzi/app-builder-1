@@ -105,23 +105,52 @@ async def forward_v1(path: str, request: Request) -> Any:
         "Authorization": f"Bearer {_UPSTREAM_KEY}",
         "Content-Type": request.headers.get("Content-Type", "application/json"),
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        upstream = await client.request(
-            request.method,
-            url,
-            content=body,
-            headers=headers,
+    started = time.perf_counter()
+    print(f"llm_proxy request path={path}", flush=True)
+    client = httpx.AsyncClient(timeout=120.0)
+    try:
+        upstream = await client.send(
+            client.build_request(request.method, url, content=body, headers=headers),
+            stream=True,
         )
-    if upstream.headers.get("content-type", "").startswith("text/event-stream"):
+    except Exception:
+        await client.aclose()
+        raise
+    content_type = upstream.headers.get("content-type", "")
+    if content_type.startswith("text/event-stream"):
+
+        async def _chunks():
+            first = True
+            try:
+                async for chunk in upstream.aiter_bytes():
+                    if first:
+                        first = False
+                        elapsed_ms = (time.perf_counter() - started) * 1000
+                        print(f"llm_proxy first_chunk_ms={elapsed_ms:.0f} path={path}", flush=True)
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
         return StreamingResponse(
-            upstream.aiter_bytes(),
+            _chunks(),
             status_code=upstream.status_code,
             media_type="text/event-stream",
         )
-    return JSONResponse(
-        upstream.json() if upstream.content else {},
-        status_code=upstream.status_code,
-    )
+    try:
+        payload = await upstream.aread()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        print(f"llm_proxy response_ms={elapsed_ms:.0f} path={path}", flush=True)
+        if not payload:
+            return JSONResponse({}, status_code=upstream.status_code)
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            data = {"error": payload.decode("utf-8", errors="replace")[:500]}
+        return JSONResponse(data, status_code=upstream.status_code)
+    finally:
+        await upstream.aclose()
+        await client.aclose()
 
 
 @app.get("/health")

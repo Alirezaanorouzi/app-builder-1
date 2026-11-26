@@ -36,7 +36,9 @@ class Database:
             with c.transaction():
                 rows = c.execute(
                     """
-                    SELECT ar.*, p.conversation_id, p.template_id, p.title, p.owner_id
+                    SELECT ar.*, p.conversation_id, p.template_id, p.title, p.owner_id,
+                           EXTRACT(EPOCH FROM (clock_timestamp() - ar.created_at)) * 1000
+                             AS queue_wait_ms
                     FROM agent_runs ar
                     JOIN projects p ON p.id = ar.project_id
                     WHERE ar.status = 'queued'
@@ -402,6 +404,41 @@ class Database:
                 """,
                 (expires_at, project_id),
             )
+
+    def update_sandbox_runtime(
+        self,
+        project_id: uuid.UUID,
+        *,
+        runtime_session_id: str | None = None,
+        agent_entry_sha: str | None = None,
+        workspace_manifest: str | None = None,
+    ) -> None:
+        sets: list[str] = []
+        params: list[Any] = []
+        if runtime_session_id is not None:
+            sets.append("runtime_session_id = %s")
+            params.append(runtime_session_id)
+        if agent_entry_sha is not None:
+            sets.append("agent_entry_sha = %s")
+            params.append(agent_entry_sha)
+        if workspace_manifest is not None:
+            sets.append("workspace_manifest = %s")
+            params.append(workspace_manifest)
+        if not sets:
+            return
+        params.append(project_id)
+        with self.conn() as c:
+            c.execute(
+                f"UPDATE sandboxes SET {', '.join(sets)}, updated_at = now() WHERE project_id = %s",
+                params,
+            )
+
+    def workspace_manifest(self, project_id: uuid.UUID) -> str | None:
+        row = self.get_sandbox_row(project_id)
+        if not row:
+            return None
+        text = row.get("workspace_manifest")
+        return str(text) if text else None
 
     def clear_sandbox_session_expires(self, project_id: uuid.UUID) -> None:
         with self.conn() as c:
