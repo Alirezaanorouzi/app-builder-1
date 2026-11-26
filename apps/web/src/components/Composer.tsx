@@ -24,18 +24,17 @@ export function Composer({
   onStop,
   onRequestWake,
 }: Props) {
-  const blocked = busy || warming;
   const busyLine =
     activeStatus === "queued" || activeStatus == null ? fa.waiting : fa.running;
 
   function onComposerFocus() {
-    if (!blocked) onRequestWake?.();
+    if (!busy) onRequestWake?.();
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!blocked && text.trim()) onSend();
+      if (!busy && text.trim()) onSend();
     }
   }
 
@@ -46,23 +45,28 @@ export function Composer({
           <p className="composer-busy-line" role="status" aria-live="polite">
             {busyLine}
           </p>
-        ) : warming ? (
-          <p className="composer-busy-line">{fa.sandboxWarmingComposer}</p>
         ) : (
-          <textarea
-            className="composer-input"
-            rows={1}
-            value={text}
-            onChange={(e) => onTextChange(e.target.value)}
-            onFocus={onComposerFocus}
-            onKeyDown={onKeyDown}
-            placeholder={fa.composerPlaceholder}
-            aria-label={fa.composerPlaceholder}
-          />
+          <>
+            {warming ? (
+              <p className="composer-busy-line" role="status">
+                {fa.sandboxWarmingComposer}
+              </p>
+            ) : null}
+            <textarea
+              className="composer-input"
+              rows={1}
+              value={text}
+              onChange={(e) => onTextChange(e.target.value)}
+              onFocus={onComposerFocus}
+              onKeyDown={onKeyDown}
+              placeholder={fa.composerPlaceholder}
+              aria-label={fa.composerPlaceholder}
+            />
+          </>
         )}
 
         <ComposerFooter
-          busy={blocked}
+          busy={busy}
           modelLabel={modelLabel}
           onSend={onSend}
           onStop={onStop}

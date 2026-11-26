@@ -19,9 +19,9 @@ export const fa = {
     "در حال بالا آوردن Vercel Sandbox… پس از آماده شدن لینک اینجا می‌آید",
   previewWaking:
     "در حال آماده‌سازی sandbox (Vite و Agent Server)…",
-  sandboxWarming: "در حال آماده‌سازی sandbox برای ارسال سریع‌تر…",
-  sandboxWarmingHint: "تا وقتی این پیام هست ارسال غیرفعال است.",
-  sandboxWarmingComposer: "در حال آماده‌سازی sandbox… لطفاً چند ثانیه صبر کنید.",
+  sandboxWarming: "sandbox هنوز آماده نیست.",
+  sandboxWarmingHint: "با ارسال پیام روشن می‌شود.",
+  sandboxWarmingComposer: "sandbox هنوز آماده نیست. پیام را بفرستید تا روشن شود.",
   previewLocal: "پیش‌نمایش محلی (Vite روی این سیستم)",
   previewVercel: "پیش‌نمایش Vercel Sandbox",
   previewOpenLink: "باز کردن در تب جدید",

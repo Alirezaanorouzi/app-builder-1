@@ -30,7 +30,12 @@ export async function POST(
 
   try {
     const run = await query<{ id: string }>(
-      `WITH run AS (
+      `WITH cancelled_wake AS (
+         UPDATE sandbox_wake_requests
+         SET status = 'cancelled', finished_at = now()
+         WHERE project_id = $1 AND status IN ('queued', 'running')
+       ),
+       run AS (
          INSERT INTO agent_runs (project_id, user_id, model, status)
          VALUES ($1, $2, $3, 'queued')
          RETURNING id
@@ -71,8 +76,13 @@ export async function DELETE(
   if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id: projectId } = await params;
   await query(
-    `UPDATE agent_runs
-     SET cancel_requested_at = now(), status = 'cancelled', finished_at = now()
+    `WITH cancelled_run AS (
+       UPDATE agent_runs
+       SET cancel_requested_at = now(), status = 'cancelled', finished_at = now()
+       WHERE project_id = $1 AND user_id = $2 AND status IN ('queued','running')
+     )
+     UPDATE sandbox_wake_requests
+     SET status = 'cancelled', finished_at = now()
      WHERE project_id = $1 AND user_id = $2 AND status IN ('queued','running')`,
     [projectId, userId],
   );

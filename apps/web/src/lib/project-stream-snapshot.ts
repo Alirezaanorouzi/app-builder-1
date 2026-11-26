@@ -169,7 +169,11 @@ async function loadActiveRunAndMeta(projectId: string): Promise<{
      ORDER BY created_at DESC LIMIT 1`,
     [projectId],
   );
-  const activeRun = runs.rows[0];
+  const latest = runs.rows[0];
+  const activeRun =
+    latest && (latest.status === "queued" || latest.status === "running")
+      ? latest
+      : undefined;
   const sb = sandbox.rows[0] ?? null;
   const previewUrl = sb?.preview_url ?? null;
   const liveOutput =

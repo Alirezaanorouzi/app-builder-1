@@ -121,7 +121,7 @@ export default function ProjectPage() {
 
   async function send() {
     const content = text.trim();
-    if (!content || busy || sandboxWarming) return;
+    if (!content || busy) return;
     const optimisticId = `opt-${Date.now()}`;
     setSendPending(true);
     setActiveStatus("queued");
