@@ -56,3 +56,27 @@ export async function getSessionUserId(): Promise<string | null> {
   );
   return res.rows[0]?.user_id ?? null;
 }
+
+function adminEmails(): Set<string> {
+  return new Set(
+    (process.env.ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** Logged-in user whose email is listed in ADMIN_EMAILS. */
+export async function requireAdmin(): Promise<{ id: string; email: string } | null> {
+  const userId = await getSessionUserId();
+  if (!userId) return null;
+  const allow = adminEmails();
+  if (allow.size === 0) return null;
+  const res = await query<{ email: string }>(
+    `SELECT email::text AS email FROM users WHERE id = $1 AND status = 'active'`,
+    [userId],
+  );
+  const email = res.rows[0]?.email?.trim().toLowerCase();
+  if (!email || !allow.has(email)) return null;
+  return { id: userId, email };
+}

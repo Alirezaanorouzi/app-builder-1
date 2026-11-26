@@ -169,11 +169,20 @@ export default function ProjectPage() {
     }
   }
 
+  function recordPreviewEvent(name: "preview_open" | "preview_copy") {
+    void fetch(`/api/projects/${id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  }
+
   async function copyPreviewUrl() {
     if (!previewUrl) return;
     try {
       await navigator.clipboard.writeText(previewUrl);
       setCopiedPreview(true);
+      recordPreviewEvent("preview_copy");
       window.setTimeout(() => setCopiedPreview(false), 2000);
     } catch {
       /* ignore */
@@ -273,6 +282,7 @@ export default function ProjectPage() {
                 target="_blank"
                 rel="noopener noreferrer"
                 title={previewUrl}
+                onClick={() => recordPreviewEvent("preview_open")}
               >
                 {previewUrl}
               </a>
@@ -283,6 +293,7 @@ export default function ProjectPage() {
                 rel="noopener noreferrer"
                 aria-label={fa.previewOpenLink}
                 title={fa.previewOpenLink}
+                onClick={() => recordPreviewEvent("preview_open")}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
                   <path
