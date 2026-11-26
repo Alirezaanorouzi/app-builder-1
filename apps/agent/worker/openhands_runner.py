@@ -31,6 +31,33 @@ from worker.workspace.vercel_ws import VercelWorkspace
 logger = logging.getLogger(__name__)
 
 
+def agent_visible_reply(event: Any) -> tuple[str, str] | None:
+    """User-visible text from a chat message, or from the finish tool if that is all we got."""
+    cls = type(event).__name__
+    if cls == "MessageEvent" and getattr(event, "source", None) == "agent":
+        text = _message_event_text(event)
+        return ("message", text) if text else None
+    if cls == "ActionEvent" and getattr(event, "tool_name", None) == "finish":
+        action = getattr(event, "action", None)
+        message = getattr(action, "message", None) if action is not None else None
+        if isinstance(message, str) and message.strip():
+            return ("finish", message.strip())
+    return None
+
+
+def _message_event_text(event: Any) -> str:
+    try:
+        from openhands.sdk.llm import content_to_str
+
+        llm_message = getattr(event, "llm_message", None)
+        content = getattr(llm_message, "content", None)
+        if content is None:
+            return ""
+        return "\n".join(content_to_str(content)).strip()
+    except Exception:
+        return ""
+
+
 def _is_max_iterations_error(exc: BaseException) -> bool:
     text = str(exc)
     return "MaxIterationsReached" in text or "maximum iterations" in text.lower()
@@ -262,6 +289,7 @@ def run_agent_turn(
     stream_appender = RunLiveStreamAppender(db, run_id)
     event_seq_holder = {"n": db.next_event_seq(run_id)}
     assistant_chunks: list[str] = []
+    finish_messages: list[str] = []
     agent_run_armed = threading.Event()
 
     def on_event(event: Any) -> None:
@@ -301,16 +329,13 @@ def run_agent_turn(
                     on_staging_sync()
                 except Exception:
                     logger.exception("staging sync callback failed")
-        if cls == "MessageEvent" and getattr(event, "source", None) == "agent":
-            try:
-                from openhands.sdk.llm import content_to_str
-
-                parts = content_to_str(event.llm_message.content)
-                text = "\n".join(parts).strip()
-                if text:
-                    assistant_chunks.append(text)
-            except Exception:
-                pass
+        visible = agent_visible_reply(event)
+        if visible is not None:
+            kind, text = visible
+            if kind == "message":
+                assistant_chunks.append(text)
+            else:
+                finish_messages.append(text)
 
     def on_token(chunk: Any) -> None:
         if cancel_check() or not agent_run_armed.is_set():
@@ -501,6 +526,8 @@ def run_agent_turn(
         final_status = "cancelled"
     if final_status == "succeeded":
         reply = "\n".join(assistant_chunks).strip()
+        if not reply:
+            reply = "\n".join(finish_messages).strip()
         if hit_max_iterations:
             note = (
                 f"\n\n[حداکثر {settings.max_iterations} گام agent تمام شد؛ "
