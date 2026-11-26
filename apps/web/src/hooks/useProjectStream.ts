@@ -62,8 +62,20 @@ function mergeDelta(
 ): { messages: Message[]; runEvents: RunEvent[]; runId: string | null } {
   const seenMsg = new Set(prevMessages.map((m) => m.id));
   const messages = [...prevMessages];
-  for (const m of delta.messages ?? []) {
-    if (!seenMsg.has(m.id)) messages.push(m);
+  for (const incoming of delta.messages ?? []) {
+    if (seenMsg.has(incoming.id)) continue;
+    const optimistic = messages.findIndex(
+      (existing) =>
+        existing.id.startsWith("opt-") &&
+        existing.role === incoming.role &&
+        existing.content === incoming.content,
+    );
+    if (optimistic >= 0) {
+      messages[optimistic] = incoming;
+    } else {
+      messages.push(incoming);
+    }
+    seenMsg.add(incoming.id);
   }
   const nextRunId = delta.activeRun?.id ?? null;
   const runChanged = nextRunId !== prevRunId;

@@ -6,7 +6,6 @@ type Props = {
   busy: boolean;
   warming?: boolean;
   activeStatus: string | null;
-  modelLabel: string;
   onTextChange: (v: string) => void;
   onSend: () => void;
   onStop: () => void;
@@ -18,7 +17,6 @@ export function Composer({
   busy,
   warming = false,
   activeStatus,
-  modelLabel,
   onTextChange,
   onSend,
   onStop,
@@ -65,13 +63,7 @@ export function Composer({
           </>
         )}
 
-        <ComposerFooter
-          busy={busy}
-          modelLabel={modelLabel}
-          onSend={onSend}
-          onStop={onStop}
-          text={text}
-        />
+        <ComposerFooter busy={busy} onSend={onSend} onStop={onStop} text={text} />
       </div>
     </div>
   );
@@ -79,23 +71,17 @@ export function Composer({
 
 function ComposerFooter({
   busy,
-  modelLabel,
   onSend,
   onStop,
   text,
 }: {
   busy: boolean;
-  modelLabel: string;
   onSend: () => void;
   onStop: () => void;
   text: string;
 }) {
   return (
     <div className="composer-footer">
-      <div className="composer-model-wrap" title={modelLabel}>
-        <span className="composer-model">{modelLabel}</span>
-      </div>
-
       <div className="composer-actions">
         {busy ? (
           <button type="button" className="composer-stop" onClick={onStop}>

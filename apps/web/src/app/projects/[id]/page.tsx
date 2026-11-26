@@ -23,11 +23,6 @@ type SandboxInfo = {
   session_expires_at?: string | null;
 } | null;
 
-function shortModelLabel(model: string) {
-  const part = model.split("/").pop() ?? model;
-  return part.length > 28 ? `${part.slice(0, 25)}…` : part;
-}
-
 export default function ProjectPage() {
   const params = useParams();
   const id = String(params.id);
@@ -52,9 +47,9 @@ export default function ProjectPage() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [thinkingVisible, setThinkingVisible] = useState(false);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const sendingRef = useRef(false);
   const model =
     process.env.NEXT_PUBLIC_DEFAULT_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
-  const modelLabel = shortModelLabel(model);
 
   useEffect(() => {
     fetch(`/api/projects/${id}`)
@@ -119,7 +114,8 @@ export default function ProjectPage() {
 
   async function send() {
     const content = text.trim();
-    if (!content || busy) return;
+    if (!content || busy || sendingRef.current) return;
+    sendingRef.current = true;
     const optimisticId = `opt-${Date.now()}`;
     setSendPending(true);
     setActiveStatus("queued");
@@ -142,6 +138,7 @@ export default function ProjectPage() {
         return;
       }
     } finally {
+      sendingRef.current = false;
       setSendPending(false);
     }
   }
@@ -167,12 +164,10 @@ export default function ProjectPage() {
     }
   }
 
-  const previewLabel =
-    sandbox?.provider === "vercel"
-      ? fa.previewVercel
-      : sandbox?.provider === "local"
-        ? fa.previewLocal
-        : null;
+  const lastMessage = messages[messages.length - 1];
+  const replyAfterActivity =
+    lastMessage?.role === "assistant" && activityEvents.length > 0 ? lastMessage : null;
+  const threadMessages = replyAfterActivity ? messages.slice(0, -1) : messages;
 
   return (
     <div className="project-shell">
@@ -208,13 +203,9 @@ export default function ProjectPage() {
               {messages.length === 0 ? (
                 <p className="chat-empty">{fa.chatEmpty}</p>
               ) : null}
-              {messages.map((m) => (
+              {threadMessages.map((m) => (
                 <ChatMessage key={m.id} role={m.role} content={m.content} />
               ))}
-              <ThinkingLoader visible={thinkingVisible} />
-              {busy && liveOutput ? (
-                <ChatMessage role="assistant" content={liveOutput} streaming />
-              ) : null}
               {activityEvents.length > 0 ? (
                 <ActivityRail
                   events={activityEvents}
@@ -223,15 +214,22 @@ export default function ProjectPage() {
                   onToggle={() => setActivityOpen((v) => !v)}
                 />
               ) : null}
+              {replyAfterActivity ? (
+                <ChatMessage
+                  key={replyAfterActivity.id}
+                  role={replyAfterActivity.role}
+                  content={replyAfterActivity.content}
+                />
+              ) : null}
+              <ThinkingLoader visible={thinkingVisible} />
+              {busy && liveOutput ? (
+                <ChatMessage role="assistant" content={liveOutput} streaming />
+              ) : null}
               <div ref={threadEndRef} className="thread-anchor" />
             </div>
           </section>
         ) : previewUrl ? (
           <section className="preview-pane">
-            {previewLabel ? <p className="preview-meta">{previewLabel}</p> : null}
-            {sandbox?.external_id ? (
-              <p className="preview-meta preview-meta-mono">{sandbox.external_id}</p>
-            ) : null}
             <iframe
               className="preview"
               title="preview"
@@ -239,14 +237,27 @@ export default function ProjectPage() {
               sandbox="allow-scripts allow-same-origin"
             />
             <div className="preview-url-bar">
+              <span className="preview-url-text" title={previewUrl}>
+                {previewUrl}
+              </span>
               <a
-                className="preview-url-link"
+                className="preview-url-copy"
                 href={previewUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                aria-label={fa.previewOpenLink}
                 title={fa.previewOpenLink}
               >
-                {previewUrl}
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14 5h5v5M19 5l-8 8M10 5H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"
+                  />
+                </svg>
               </a>
               <button
                 type="button"
@@ -290,7 +301,6 @@ export default function ProjectPage() {
           busy={busy}
           warming={sandboxWarming}
           activeStatus={activeStatus}
-          modelLabel={modelLabel}
           onTextChange={setText}
           onSend={send}
           onStop={stop}
