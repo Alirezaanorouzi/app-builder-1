@@ -104,10 +104,15 @@ export default function AdminUserPage() {
                   <td>{project.status}</td>
                   <td>{project.opens}</td>
                   <td>{project.copies}</td>
-                  <td>
+                  <td className="admin-url-cell">
                     {project.preview_url ? (
-                      <a href={project.preview_url} target="_blank" rel="noopener noreferrer">
-                        Open
+                      <a
+                        className="admin-url"
+                        href={project.preview_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {project.preview_url}
                       </a>
                     ) : (
                       "—"

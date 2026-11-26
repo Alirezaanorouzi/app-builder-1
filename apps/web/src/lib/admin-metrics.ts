@@ -195,6 +195,12 @@ export async function loadOverview() {
   };
 }
 
+export type AdminUserMessage = {
+  content: string;
+  created_at: string;
+  title: string;
+};
+
 export type AdminUserRow = {
   id: string;
   email: string;
@@ -207,7 +213,29 @@ export type AdminUserRow = {
   preview_copies: number;
   last_activity: string;
   activated: boolean;
+  recent_user_messages: AdminUserMessage[];
+  preview_urls: string[];
 };
+
+function asMessages(value: unknown): AdminUserMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as { content?: unknown; created_at?: unknown; title?: unknown };
+    return [
+      {
+        content: String(row.content ?? ""),
+        created_at: String(row.created_at ?? ""),
+        title: String(row.title ?? ""),
+      },
+    ];
+  });
+}
+
+function asUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item ?? "")).filter(Boolean);
+}
 
 export async function loadAdminUsers(): Promise<AdminUserRow[]> {
   const res = await query<AdminUserRow>(
@@ -246,7 +274,30 @@ export async function loadAdminUsers(): Promise<AdminUserRow[]> {
            SELECT 1 FROM product_events e
            WHERE e.user_id = u.id AND e.name IN ('preview_open', 'preview_copy')
          )
-       ) AS activated
+       ) AS activated,
+       (
+         SELECT COALESCE(json_agg(json_build_object(
+           'content', t.content,
+           'created_at', t.created_at,
+           'title', t.title
+         ) ORDER BY t.created_at DESC), '[]'::json)
+         FROM (
+           SELECT m.content, m.created_at, p.title
+           FROM messages m
+           JOIN projects p ON p.id = m.project_id
+           WHERE p.owner_id = u.id AND m.role = 'user'
+           ORDER BY m.created_at DESC
+           LIMIT 8
+         ) t
+       ) AS recent_user_messages,
+       (
+         SELECT COALESCE(json_agg(s.preview_url), '[]'::json)
+         FROM sandboxes s
+         JOIN projects p ON p.id = s.project_id
+         WHERE p.owner_id = u.id
+           AND p.status <> 'deleted'
+           AND COALESCE(s.preview_url, '') <> ''
+       ) AS preview_urls
      FROM users u
      WHERE u.status <> 'deleted'
      ORDER BY u.created_at DESC`,
@@ -259,6 +310,8 @@ export async function loadAdminUsers(): Promise<AdminUserRow[]> {
     preview_opens: Number(row.preview_opens),
     preview_copies: Number(row.preview_copies),
     activated: Boolean(row.activated),
+    recent_user_messages: asMessages(row.recent_user_messages),
+    preview_urls: asUrls(row.preview_urls),
   }));
 }
 

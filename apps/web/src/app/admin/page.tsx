@@ -35,6 +35,8 @@ type UserRow = {
   preview_copies: number;
   last_activity: string;
   activated: boolean;
+  recent_user_messages?: { content: string; created_at: string; title: string }[];
+  preview_urls?: string[];
 };
 
 type Flag = {
@@ -219,6 +221,38 @@ export default function AdminPage() {
                       {user.display_name || user.email}
                     </Link>
                     <div className="admin-muted">{user.email}</div>
+                    <div className="admin-user-detail">
+                      <div className="admin-kicker">Messages sent</div>
+                      {(user.recent_user_messages ?? []).length === 0 ? (
+                        <p className="admin-muted">No messages yet.</p>
+                      ) : (
+                        (user.recent_user_messages ?? []).map((message, index) => (
+                          <p key={`${user.id}-${index}`} className="admin-snippet">
+                            <span className="admin-muted">
+                              {message.title} · {when(message.created_at)}
+                            </span>
+                            <br />
+                            {message.content}
+                          </p>
+                        ))
+                      )}
+                      <div className="admin-kicker">Live preview</div>
+                      {(user.preview_urls ?? []).length === 0 ? (
+                        <p className="admin-muted">No preview link yet.</p>
+                      ) : (
+                        (user.preview_urls ?? []).map((url) => (
+                          <a
+                            key={url}
+                            className="admin-url"
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {url}
+                          </a>
+                        ))
+                      )}
+                    </div>
                   </td>
                   <td>{when(user.created_at)}</td>
                   <td>{user.projects}</td>
