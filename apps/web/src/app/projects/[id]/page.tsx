@@ -46,12 +46,11 @@ export default function ProjectPage() {
     liveOutput,
   } = useProjectStream(id);
   const [text, setText] = useState("");
-  const [activityOpen, setActivityOpen] = useState(true);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [copiedPreview, setCopiedPreview] = useState(false);
   const [sendPending, setSendPending] = useState(false);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [thinkingVisible, setThinkingVisible] = useState(false);
-  const activityEndRef = useRef<HTMLDivElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const model =
     process.env.NEXT_PUBLIC_DEFAULT_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
@@ -79,7 +78,7 @@ export default function ProjectPage() {
 
   const busy =
     sendPending || activeStatus === "queued" || activeStatus === "running";
-  const activityChips = runEvents.filter(isActivityChipEvent).slice(-14);
+  const activityEvents = runEvents.filter(isActivityChipEvent);
   const wakeInFlight = previewWaking;
 
   const { requestWake } = useSandboxWake(id, sandbox, previewUrl, { busy, wakeInFlight });
@@ -88,9 +87,8 @@ export default function ProjectPage() {
   const sandboxWarming = usesVercelRemoteStack(sandbox) && !stackReady;
 
   useEffect(() => {
-    if (!busy || !activityOpen) return;
-    activityEndRef.current?.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
-  }, [runEvents.length, busy, activityOpen]);
+    if (!busy) setActivityOpen(false);
+  }, [busy]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -217,12 +215,11 @@ export default function ProjectPage() {
               {busy && liveOutput ? (
                 <ChatMessage role="assistant" content={liveOutput} streaming />
               ) : null}
-              {busy && runEvents.length > 0 ? (
+              {busy && activityEvents.length > 0 ? (
                 <ActivityRail
-                  events={activityChips}
+                  events={activityEvents}
                   open={activityOpen}
                   onToggle={() => setActivityOpen((v) => !v)}
-                  endRef={activityEndRef}
                 />
               ) : null}
               <div ref={threadEndRef} className="thread-anchor" />

@@ -13,7 +13,7 @@ export type ProjectStreamActiveRun = {
   id: string;
   status: string;
   live_output: string | null;
-} | undefined;
+} | null;
 
 export type ProjectStreamRunEvent = {
   seq: number;
@@ -98,10 +98,6 @@ export function mergeProjectStreamUpdates(
   prev: ProjectStreamUpdate,
   delta: ProjectStreamUpdate,
 ): ProjectStreamUpdate {
-  const runChanged =
-    (delta.activeRun?.id ?? null) !== (prev.activeRun?.id ?? null) ||
-    (delta.activeRun?.status ?? null) !== (prev.activeRun?.status ?? null);
-
   let messages = prev.messages;
   if (delta.messages.length) {
     const seen = new Set(prev.messages.map((m) => m.id));
@@ -112,8 +108,12 @@ export function mergeProjectStreamUpdates(
   }
 
   let runEvents = prev.runEvents;
-  if (runChanged && delta.runEvents.length) {
-    runEvents = delta.runEvents;
+  const prevId = prev.activeRun?.id ?? null;
+  const nextId = delta.activeRun?.id ?? null;
+  if (prevId !== nextId) {
+    // A new run restarts seq at 0. Keeping the previous run's events makes the
+    // cursor skip every step of the next run.
+    runEvents = nextId ? delta.runEvents : [];
   } else if (delta.runEvents.length) {
     const seenSeq = new Set(prev.runEvents.map((e) => e.seq));
     const appended = delta.runEvents.filter((e) => !seenSeq.has(e.seq));
@@ -129,7 +129,7 @@ export function mergeProjectStreamUpdates(
 
   return {
     messages,
-    activeRun: delta.activeRun ?? prev.activeRun,
+    activeRun: delta.activeRun,
     liveOutput: liveOutput ?? null,
     previewUrl: delta.previewUrl ?? prev.previewUrl,
     runEvents,
@@ -173,7 +173,7 @@ async function loadActiveRunAndMeta(projectId: string): Promise<{
   const activeRun =
     latest && (latest.status === "queued" || latest.status === "running")
       ? latest
-      : undefined;
+      : null;
   const sb = sandbox.rows[0] ?? null;
   const previewUrl = sb?.preview_url ?? null;
   const liveOutput =

@@ -65,11 +65,11 @@ function mergeDelta(
   for (const m of delta.messages ?? []) {
     if (!seenMsg.has(m.id)) messages.push(m);
   }
-  const nextRunId = delta.activeRun?.id ?? prevRunId;
-  const runChanged = Boolean(nextRunId && prevRunId && nextRunId !== prevRunId);
+  const nextRunId = delta.activeRun?.id ?? null;
+  const runChanged = nextRunId !== prevRunId;
   let runEvents = prevEvents;
   if (runChanged) {
-    runEvents = delta.runEvents ?? [];
+    runEvents = nextRunId ? (delta.runEvents ?? []) : [];
   } else if (delta.runEvents?.length) {
     const seenSeq = new Set(prevEvents.map((e) => e.seq));
     const appended = delta.runEvents.filter((e) => !seenSeq.has(e.seq));

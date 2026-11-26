@@ -5,9 +5,13 @@ export type RunEventRow = {
   payload?: Record<string, unknown>;
 };
 
-const INTERNAL_RUN_EVENTS = new Set(["RunTimelineEvent"]);
+const INTERNAL_RUN_EVENTS = new Set([
+  "RunTimelineEvent",
+  "StreamingDeltaEvent",
+  "ConversationStateUpdateEvent",
+]);
 
-/** Worker UX markers — not shown in the activity chip rail. */
+/** Steps worth showing on the live activity line. Token and stats events stay off it. */
 export function isActivityChipEvent(
   row: Pick<RunEventRow, "event_class">,
 ): boolean {

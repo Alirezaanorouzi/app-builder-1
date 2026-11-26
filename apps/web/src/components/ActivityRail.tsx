@@ -1,5 +1,4 @@
-import type { RefObject } from "react";
-import { fa } from "@/lib/dict";
+import { useEffect, useRef } from "react";
 import { runEventTooltip } from "@/lib/run-events";
 
 type RunEvent = {
@@ -14,52 +13,57 @@ type Props = {
   events: RunEvent[];
   open: boolean;
   onToggle: () => void;
-  endRef: RefObject<HTMLDivElement>;
 };
 
-export function ActivityRail({ events, open, onToggle, endRef }: Props) {
-  const chips = events.slice(-14);
+/** One live line. The latest step replaces the previous one. The arrow opens the full list. */
+export function ActivityRail({ events, open, onToggle }: Props) {
+  const latest = events[events.length - 1];
+  const listRef = useRef<HTMLOListElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.lastElementChild?.scrollIntoView({ block: "nearest" });
+  }, [open, events.length]);
+  if (!latest) return null;
 
   return (
-    <div className="activity-panel">
+    <div className="live-activity">
       <button
         type="button"
-        className="activity-toggle"
+        className="live-activity-line"
         onClick={onToggle}
         aria-expanded={open}
       >
-        <span>{fa.activity}</span>
-        <span className="activity-count">{events.length}</span>
-        <span className="activity-toggle-label">
-          {open ? fa.activityHide : fa.activityShow}
+        <span className="live-activity-mark" aria-hidden />
+        <span className="live-activity-text" title={runEventTooltip(latest) ?? latest.summary}>
+          {latest.summary}
         </span>
+        <svg
+          className={`live-activity-chevron${open ? " live-activity-chevron-open" : ""}`}
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          aria-hidden
+        >
+          <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z" />
+        </svg>
       </button>
       {open ? (
-        <div className="activity-strip" aria-live="polite">
-          {chips.map((e) => (
-            <span
-              key={e.seq}
-              className="activity-chip"
-              title={runEventTooltip(e) ?? e.event_class}
+        <ol ref={listRef} className="live-activity-list">
+          {events.map((event) => (
+            <li
+              key={event.seq}
+              className={
+                event.seq === latest.seq
+                  ? "live-activity-item live-activity-item-current"
+                  : "live-activity-item"
+              }
+              title={runEventTooltip(event) ?? event.summary}
             >
-              {e.summary}
-            </span>
+              {event.summary}
+            </li>
           ))}
-          <div ref={endRef} className="activity-strip-anchor" />
-        </div>
-      ) : (
-        <div className="activity-strip activity-strip-collapsed">
-          {chips.slice(-1).map((e) => (
-            <span
-              key={e.seq}
-              className="activity-chip activity-chip-latest"
-              title={runEventTooltip(e) ?? e.event_class}
-            >
-              {e.summary}
-            </span>
-          ))}
-        </div>
-      )}
+        </ol>
+      ) : null}
     </div>
   );
 }
