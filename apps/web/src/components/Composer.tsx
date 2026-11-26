@@ -5,6 +5,7 @@ type Props = {
   text: string;
   busy: boolean;
   warming?: boolean;
+  hasMessages?: boolean;
   activeStatus: string | null;
   onTextChange: (v: string) => void;
   onSend: () => void;
@@ -16,6 +17,7 @@ export function Composer({
   text,
   busy,
   warming = false,
+  hasMessages = false,
   activeStatus,
   onTextChange,
   onSend,
@@ -24,6 +26,9 @@ export function Composer({
 }: Props) {
   const busyLine =
     activeStatus === "queued" || activeStatus == null ? fa.waiting : fa.running;
+  const placeholder = hasMessages
+    ? fa.composerPlaceholderFollowUp
+    : fa.composerPlaceholderFirst;
 
   function onComposerFocus() {
     if (!busy) onRequestWake?.();
@@ -40,63 +45,43 @@ export function Composer({
     <div className="composer-shell" role="region" aria-label={fa.chat}>
       <div className="composer-card">
         {busy ? (
-          <p className="composer-busy-line" role="status" aria-live="polite">
-            {busyLine}
-          </p>
+          <div className="composer-row">
+            <p className="composer-busy-line" role="status" aria-live="polite">
+              {busyLine}
+            </p>
+            <button type="button" className="composer-stop" onClick={onStop}>
+              {fa.stop}
+            </button>
+          </div>
         ) : (
-          <>
-            {warming ? (
-              <p className="composer-busy-line" role="status">
-                {fa.sandboxWarmingComposer}
-              </p>
-            ) : null}
-            <textarea
-              className="composer-input"
-              rows={1}
-              value={text}
-              onChange={(e) => onTextChange(e.target.value)}
-              onFocus={onComposerFocus}
-              onKeyDown={onKeyDown}
-              placeholder={fa.composerPlaceholder}
-              aria-label={fa.composerPlaceholder}
-            />
-          </>
-        )}
-
-        <ComposerFooter busy={busy} onSend={onSend} onStop={onStop} text={text} />
-      </div>
-    </div>
-  );
-}
-
-function ComposerFooter({
-  busy,
-  onSend,
-  onStop,
-  text,
-}: {
-  busy: boolean;
-  onSend: () => void;
-  onStop: () => void;
-  text: string;
-}) {
-  return (
-    <div className="composer-footer">
-      <div className="composer-actions">
-        {busy ? (
-          <button type="button" className="composer-stop" onClick={onStop}>
-            {fa.stop}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="composer-send"
-            onClick={onSend}
-            disabled={!text.trim()}
-            aria-label={fa.send}
-          >
-            <SendIcon />
-          </button>
+          <div className="composer-row">
+            <div className="composer-field">
+              {warming ? (
+                <p className="composer-warm-hint" role="status">
+                  {fa.sandboxWarmingComposer}
+                </p>
+              ) : null}
+              <textarea
+                className="composer-input"
+                rows={1}
+                value={text}
+                onChange={(e) => onTextChange(e.target.value)}
+                onFocus={onComposerFocus}
+                onKeyDown={onKeyDown}
+                placeholder={placeholder}
+                aria-label={placeholder}
+              />
+            </div>
+            <button
+              type="button"
+              className="composer-send"
+              onClick={onSend}
+              disabled={!text.trim()}
+              aria-label={fa.send}
+            >
+              <SendIcon />
+            </button>
+          </div>
         )}
       </div>
     </div>

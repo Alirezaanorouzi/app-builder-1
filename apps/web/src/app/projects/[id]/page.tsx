@@ -46,8 +46,8 @@ export default function ProjectPage() {
   const [sendPending, setSendPending] = useState(false);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [thinkingVisible, setThinkingVisible] = useState(false);
-  const threadEndRef = useRef<HTMLDivElement | null>(null);
   const sendingRef = useRef(false);
+  const scrollTurnRef = useRef<string | null>(null);
   const model =
     process.env.NEXT_PUBLIC_DEFAULT_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
 
@@ -86,8 +86,14 @@ export default function ProjectPage() {
   }, [busy]);
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, liveOutput, thinkingVisible]);
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser || scrollTurnRef.current === lastUser.id) return;
+    scrollTurnRef.current = lastUser.id;
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-msg-id="${lastUser.id}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [messages]);
 
   useEffect(() => {
     if (!busy) {
@@ -204,7 +210,7 @@ export default function ProjectPage() {
                 <p className="chat-empty">{fa.chatEmpty}</p>
               ) : null}
               {threadMessages.map((m) => (
-                <ChatMessage key={m.id} role={m.role} content={m.content} />
+                <ChatMessage key={m.id} id={m.id} role={m.role} content={m.content} />
               ))}
               {activityEvents.length > 0 ? (
                 <ActivityRail
@@ -225,7 +231,6 @@ export default function ProjectPage() {
               {busy && liveOutput ? (
                 <ChatMessage role="assistant" content={liveOutput} streaming />
               ) : null}
-              <div ref={threadEndRef} className="thread-anchor" />
             </div>
           </section>
         ) : previewUrl ? (
@@ -237,18 +242,24 @@ export default function ProjectPage() {
               sandbox="allow-scripts allow-same-origin"
             />
             <div className="preview-url-bar">
-              <span className="preview-url-text" title={previewUrl}>
-                {previewUrl}
-              </span>
               <a
-                className="preview-url-copy"
+                className="preview-url-text"
+                href={previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={previewUrl}
+              >
+                {previewUrl}
+              </a>
+              <a
+                className="preview-url-copy preview-url-open"
                 href={previewUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={fa.previewOpenLink}
                 title={fa.previewOpenLink}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
                   <path
                     fill="none"
                     stroke="currentColor"
@@ -300,6 +311,7 @@ export default function ProjectPage() {
           text={text}
           busy={busy}
           warming={sandboxWarming}
+          hasMessages={messages.length > 0}
           activeStatus={activeStatus}
           onTextChange={setText}
           onSend={send}

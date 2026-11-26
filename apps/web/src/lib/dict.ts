@@ -31,6 +31,7 @@ export const fa = {
   activityHide: "پنهان",
   activityShow: "نمایش",
   activeRun: "یک اجرا در حال انجام است",
-  composerPlaceholder: "ایده بسازید، بگویید چه بسازیم…",
+  composerPlaceholderFirst: "چی تو ذهنته، تا بسازیمش …",
+  composerPlaceholderFollowUp: "تغییرات رو ایجاد کن",
   chatEmpty: "اولین پیام را بنویسید تا ساخت شروع شود.",
 } as const;
