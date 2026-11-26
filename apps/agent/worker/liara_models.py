@@ -134,6 +134,13 @@ def liara_user_error_message(exc: BaseException, *, liara_model: str) -> str:
             "`LIARA_MODELS` و `NEXT_PUBLIC_DEFAULT_MODEL` را با لیست `GET /v1/models` "
             f"هماهنگ کنید.\n\nجزئیات: {text[:800]}"
         )
+    if "internal server error" in lower and "500" in text:
+        return (
+            "درخواست به مدل لیارا خیلی بزرگ شده (معمولاً بعد از چند نوبت agent با تاریخچهٔ "
+            "ابزارها روی sandbox). یک بار دیگر همان پیام را بفرستید؛ worker اکنون برای پیام‌های "
+            "بعدی تاریخچهٔ remote را تازه می‌کند.\n\n"
+            f"مدل: {liara_model}\n\nجزئیات: {text[:600]}"
+        )
     if "openaiexception" in lower and "liara" not in lower:
         return (
             f"خطای API مدل (Liara/OpenAI-compatible): {text[:1200]}\n\n"

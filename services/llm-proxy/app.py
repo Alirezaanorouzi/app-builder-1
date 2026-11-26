@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
@@ -16,6 +17,34 @@ _ADMIN_KEY = os.environ.get("LLM_PROXY_ADMIN_KEY", "")
 _UPSTREAM_BASE = (os.environ.get("LIARA_BASE_URL") or "").rstrip("/")
 _UPSTREAM_KEY = os.environ.get("LIARA_API_KEY", "")
 _KEYS: dict[str, dict[str, Any]] = {}
+
+_LITELLM_VENDOR_PREFIXES = ("deepseek/", "anthropic/", "google/", "meta/", "mistral/")
+
+
+def _liara_wire_model(model: str) -> str:
+    m = model.strip()
+    while m.startswith("openai/openai/"):
+        m = m[len("openai/") :]
+    if m.startswith("openai/"):
+        rest = m[len("openai/") :]
+        if any(rest.startswith(v) for v in _LITELLM_VENDOR_PREFIXES):
+            return rest
+    return m
+
+
+def _rewrite_upstream_body(body: bytes, content_type: str | None) -> bytes:
+    if not body or "json" not in (content_type or "").lower():
+        return body
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+    if not isinstance(payload, dict):
+        return body
+    model = payload.get("model")
+    if isinstance(model, str) and model.strip():
+        payload["model"] = _liara_wire_model(model)
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
 def _require_admin(request: Request) -> None:
@@ -70,7 +99,8 @@ async def forward_v1(path: str, request: Request) -> Any:
     if not _UPSTREAM_BASE or not _UPSTREAM_KEY:
         raise HTTPException(503, "upstream not configured")
     url = f"{_UPSTREAM_BASE}/{path}"
-    body = await request.body()
+    raw_body = await request.body()
+    body = _rewrite_upstream_body(raw_body, request.headers.get("Content-Type"))
     headers = {
         "Authorization": f"Bearer {_UPSTREAM_KEY}",
         "Content-Type": request.headers.get("Content-Type", "application/json"),

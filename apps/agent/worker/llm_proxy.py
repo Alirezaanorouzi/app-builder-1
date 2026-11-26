@@ -81,28 +81,36 @@ def mint_run_llm_credential(
     virtual = secrets.token_urlsafe(32)
     admin_url = (settings.llm_proxy_admin_url or settings.llm_proxy_public_url or "").rstrip("/")
     admin_key = settings.llm_proxy_admin_key
-    if admin_url and admin_key:
-        try:
-            r = httpx.post(
-                f"{admin_url}/admin/keys",
-                headers={"Authorization": f"Bearer {admin_key}"},
-                json={
-                    "key_id": key_id,
-                    "api_key": virtual,
-                    "run_id": str(run_id),
-                    "project_id": str(project_id),
-                    "model": model,
-                    "ttl_seconds": ttl_seconds,
-                    "allowed_models": list(settings.liara_models),
-                },
-                timeout=15.0,
-            )
-            r.raise_for_status()
-            data = r.json()
-            virtual = str(data.get("api_key", virtual))
-            key_id = str(data.get("key_id", key_id))
-        except Exception:
-            logger.exception("LLM proxy mint failed for run %s; using local ephemeral key", run_id)
+    if not admin_url or not admin_key:
+        raise RuntimeError(
+            "LLM_PROXY_ADMIN_URL and LLM_PROXY_ADMIN_KEY must be set on the worker "
+            "(the proxy rejects unregistered virtual keys)."
+        )
+    try:
+        r = httpx.post(
+            f"{admin_url}/admin/keys",
+            headers={"Authorization": f"Bearer {admin_key}"},
+            json={
+                "key_id": key_id,
+                "api_key": virtual,
+                "run_id": str(run_id),
+                "project_id": str(project_id),
+                "model": model,
+                "ttl_seconds": ttl_seconds,
+                "allowed_models": list(settings.liara_models),
+            },
+            timeout=15.0,
+        )
+        r.raise_for_status()
+        data = r.json()
+        virtual = str(data.get("api_key", virtual))
+        key_id = str(data.get("key_id", key_id))
+    except Exception as e:
+        logger.exception("LLM proxy mint failed for run %s", run_id)
+        raise RuntimeError(
+            "Virtual LLM key could not be registered on LLM_PROXY (mint /admin/keys failed). "
+            "Check LLM_PROXY_ADMIN_URL is reachable from the worker."
+        ) from e
     return RunLlmCredential(api_key=virtual, base_url=base_url, key_id=key_id)
 
 

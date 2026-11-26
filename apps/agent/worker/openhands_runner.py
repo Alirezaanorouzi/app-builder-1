@@ -193,16 +193,23 @@ def run_agent_turn(
         msg = "Agent Server did not become ready on the Vercel sandbox"
         db.insert_message(project_id, run_id, "assistant", msg)
         return "failed", 0
-    if (
-        use_remote
-        and settings.remote_conversation_rotate_after_messages > 0
-        and db.count_project_messages(project_id) >= settings.remote_conversation_rotate_after_messages
-    ):
+    msg_count = db.count_project_messages(project_id)
+    # Remote Agent Server keeps full tool transcripts in the conversation. Reusing that
+    # history on follow-ups can blow Liara's context limit (HTTP 500 with no clear error).
+    rotate_remote = use_remote and (
+        msg_count > 1
+        or (
+            settings.remote_conversation_rotate_after_messages > 0
+            and msg_count >= settings.remote_conversation_rotate_after_messages
+        )
+    )
+    if rotate_remote:
         conversation_id, rotate_seed = seed_fallback(db, project_id, ws)
         seed = f"{rotate_seed}\n\nUser request: {seed}" if seed else rotate_seed
         logger.info(
-            "Rotated remote conversation for project %s (messages >= %s)",
+            "Rotated remote conversation for project %s (messages=%s, threshold=%s)",
             project_id,
+            msg_count,
             settings.remote_conversation_rotate_after_messages,
         )
     if use_remote:
