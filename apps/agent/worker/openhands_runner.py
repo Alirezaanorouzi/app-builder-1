@@ -360,7 +360,7 @@ def run_agent_turn(
                 run_id,
                 event_seq_holder["n"],
                 "RunBootstrapEvent",
-                {"summary": "در حال آماده‌سازی agent و همگام‌سازی تاریخچه"},
+                {"summary": "در حال آماده‌سازی گفتگو…"},
                 tool_name=None,
             )
             event_seq_holder["n"] += 1

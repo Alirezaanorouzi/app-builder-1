@@ -154,7 +154,7 @@ def ensure_vercel_remote_stack(
     runtime_session_id: str | None = None
     entry_sha: str | None = None
     if remote_agent:
-        _progress(db, timeline, "در حال روشن کردن sandbox…")
+        _progress(db, timeline, "در حال آماده‌سازی محیط…")
 
         def _mark(phase: str) -> None:
             if timeline is not None:
