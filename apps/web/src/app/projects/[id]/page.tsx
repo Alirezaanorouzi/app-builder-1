@@ -194,7 +194,7 @@ export default function ProjectPage() {
   const turnBody = replyAfterActivity ? turnMessages.slice(0, -1) : turnMessages;
 
   return (
-    <div className="project-shell">
+    <div className={tab === "preview" ? "project-shell project-shell-preview" : "project-shell"}>
       <header className="project-header">
         <div className="tabs">
           <button
@@ -214,7 +214,7 @@ export default function ProjectPage() {
         </div>
       </header>
 
-      <main className="project-main">
+      <main className={tab === "preview" ? "project-main project-main-preview" : "project-main"}>
         {tab === "chat" ? (
           <section className="chat-thread" aria-label={fa.chat}>
             {sandboxWarming && !busy ? (
@@ -260,14 +260,12 @@ export default function ProjectPage() {
           </section>
         ) : previewUrl ? (
           <section className="preview-pane">
-            <div className="preview-device">
-              <iframe
-                className="preview"
-                title="preview"
-                src={previewUrl}
-                sandbox="allow-scripts allow-same-origin"
-              />
-            </div>
+            <iframe
+              className="preview"
+              title="preview"
+              src={previewUrl}
+              sandbox="allow-scripts allow-same-origin"
+            />
             <div className="preview-url-bar">
               <a
                 className="preview-url-text"

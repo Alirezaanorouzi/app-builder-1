@@ -19,6 +19,11 @@ export function isActivityChipEvent(
 }
 
 const CHIP_MAX_LEN = 80;
+const PERSIAN_RE = /[\u0600-\u06FF]/;
+
+function hasPersian(text: string): boolean {
+  return PERSIAN_RE.test(text);
+}
 
 function clip(text: string, max = CHIP_MAX_LEN): string {
   const t = text.trim();
@@ -69,36 +74,40 @@ function firstSentence(text: string): string {
   return (m?.[0] ?? text).trim();
 }
 
+function persianClip(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed || !hasPersian(trimmed)) return null;
+  return clip(trimmed);
+}
+
+function persianToolPhrase(tool: string | null, file: string | null): string {
+  if (tool === "file_editor" && file) return clip(`ویرایش ${file}`);
+  if (tool === "file_editor") return "ویرایش فایل";
+  if (tool === "terminal") return "اجرای دستور";
+  if (tool === "task_tracker") return "برنامه‌ریزی کارها";
+  if (tool === "think") return "در حال فکر کردن";
+  if (tool === "finish") return "جمع‌بندی کار";
+  if (tool === "browser") return "بررسی صفحه";
+  return "در حال انجام کار";
+}
+
 function actionEventLabel(row: RunEventRow): string {
   const payload = row.payload;
   const tool = row.tool_name;
   const fromSdk = sdkSummary(payload);
-
-  if (fromSdk && !isSdkFallbackSummary(fromSdk, tool)) {
-    return clip(fromSdk);
-  }
-
   const thoughts = thoughtTexts(payload);
-  if (thoughts.length > 0) {
-    return clip(firstSentence(thoughts.join(" ")));
-  }
-
+  const thoughtLine = thoughts.length > 0 ? firstSentence(thoughts.join(" ")) : null;
   const rc = payload?.reasoning_content;
-  if (typeof rc === "string" && rc.trim()) {
-    return clip(firstSentence(rc));
-  }
+  const reasoningLine = typeof rc === "string" && rc.trim() ? firstSentence(rc) : null;
 
-  if (fromSdk) {
-    return clip(fromSdk);
-  }
+  const persian =
+    (fromSdk && !isSdkFallbackSummary(fromSdk, tool) ? persianClip(fromSdk) : null) ??
+    persianClip(thoughtLine) ??
+    persianClip(reasoningLine);
+  if (persian) return persian;
 
-  const file = basenameFromPayload(payload);
-  if (tool === "file_editor" && file) return clip(file);
-  if (tool === "terminal") return "ترمینال";
-  if (tool === "task_tracker") return "برنامه‌ریزی کارها";
-  if (tool) return clip(tool);
-
-  return "اقدام agent";
+  return persianToolPhrase(tool, basenameFromPayload(payload));
 }
 
 /** Longer hint for chip hover (optional). */
@@ -126,13 +135,14 @@ export function summarizeRunEvent(row: RunEventRow): string {
   }
 
   const file = basenameFromPayload(row.payload);
-  if (tool === "file_editor" && file) return clip(file);
-  if (tool === "terminal") return "ترمینال";
-  if (tool) return clip(tool);
+  if (tool === "file_editor" || tool === "terminal" || tool === "task_tracker") {
+    return persianToolPhrase(tool, file);
+  }
+  if (tool) return persianToolPhrase(tool, file);
 
   if (cls === "RunBootstrapEvent") {
     const s = sdkSummary(row.payload);
-    return s ? clip(s) : "آماده‌سازی agent";
+    return persianClip(s) ?? "آماده‌سازی";
   }
   if (cls === "MessageEvent") {
     const src = row.payload?.source;
