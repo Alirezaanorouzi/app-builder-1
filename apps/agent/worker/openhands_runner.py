@@ -31,6 +31,11 @@ from worker.workspace.vercel_ws import VercelWorkspace
 logger = logging.getLogger(__name__)
 
 
+def _is_max_iterations_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return "MaxIterationsReached" in text or "maximum iterations" in text.lower()
+
+
 def _clip_terminal(text: str, limit: int = 8192) -> str:
     if len(text) <= limit:
         return text
@@ -431,7 +436,11 @@ def run_agent_turn(
         conversation.run()
         timeline.mark("conversation_run_done")
     except Exception as e:
-        if cancel_mon.cancelled.is_set() or cancel_check():
+        if _is_max_iterations_error(e):
+            hit_max_iterations = True
+            final_status = "succeeded"
+            logger.warning("run %s reached max iterations", run_id)
+        elif cancel_mon.cancelled.is_set() or cancel_check():
             final_status = "cancelled"
         else:
             logger.exception("conversation.run failed")
@@ -444,42 +453,41 @@ def run_agent_turn(
             )
     finally:
         stall_stop.set()
-        cancel_mon.stop()
         stream_appender.flush()
-        if llm_credential:
-            revoke_run_llm_key(settings, llm_credential.key_id)
-        if remote_cm is not None:
-            remote_cm.__exit__(None, None, None)
-        try:
-            from openhands.sdk.conversation.state import ConversationExecutionStatus
 
-            hit_max_iterations = _max_iterations_reached(conversation)
-            exec_status = conversation.state.execution_status
-            iterations = max(
-                0,
-                sum(
-                    1
-                    for ev in conversation.state.events
-                    if type(ev).__name__ == "ActionEvent"
-                ),
+        def _release_remote() -> None:
+            if llm_credential:
+                revoke_run_llm_key(settings, llm_credential.key_id)
+            if remote_cm is not None:
+                remote_cm.__exit__(None, None, None)
+            try:
+                conversation.close()
+            except Exception:
+                logger.debug("conversation.close failed", exc_info=True)
+
+        releaser = threading.Thread(
+            target=_release_remote,
+            name=f"release-{run_id}",
+            daemon=True,
+        )
+        releaser.start()
+
+    if cancel_check() and final_status == "succeeded":
+        final_status = "cancelled"
+    if final_status == "succeeded":
+        reply = "\n".join(assistant_chunks).strip()
+        if hit_max_iterations:
+            note = (
+                f"\n\n[حداکثر {settings.max_iterations} گام agent تمام شد؛ "
+                "برای ادامه یک پیام دیگر بفرستید.]"
             )
-            if hit_max_iterations and final_status != "failed":
-                final_status = "succeeded"
-            elif (
-                exec_status == ConversationExecutionStatus.ERROR
-                and not hit_max_iterations
-                and final_status == "succeeded"
-            ):
-                final_status = "failed"
-                db.insert_message(
-                    project_id,
-                    run_id,
-                    "assistant",
-                    "خطا در اجرای agent (جزئیات در run_events).",
-                )
-            conversation.close()
-        except Exception:
-            pass
+            reply = (reply + note) if reply else note.strip()
+        if not reply:
+            reply = "انجام شد."
+        db.insert_message(project_id, run_id, "assistant", reply[:16000])
+    db.finish_run(run_id, final_status, iterations=iterations)
+    releaser.join(timeout=12)
+    cancel_mon.stop()
 
     if conv_dir.is_dir() and (conv_dir / "base_state.json").is_file():
         key, sha, size = archive_store.save_conversation(
@@ -494,19 +502,6 @@ def run_agent_turn(
             sha,
             size,
         )
-    if cancel_check() and final_status == "succeeded":
-        final_status = "cancelled"
-    if final_status == "succeeded":
-        reply = "\n".join(assistant_chunks).strip()
-        if hit_max_iterations:
-            note = (
-                f"\n\n[حداکثر {settings.max_iterations} گام agent تمام شد؛ "
-                "برای ادامه یک پیام دیگر بفرستید.]"
-            )
-            reply = (reply + note) if reply else note.strip()
-        if not reply:
-            reply = "انجام شد."
-        db.insert_message(project_id, run_id, "assistant", reply[:16000])
     timeline.log_summary()
     seq = db.next_event_seq(run_id)
     timeline.persist(db, run_id, seq)

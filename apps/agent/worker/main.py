@@ -51,7 +51,10 @@ logger = logging.getLogger("worker")
 class Worker:
     def __init__(self) -> None:
         self.settings = Settings.load()
-        self.db = Database(self.settings.database_url)
+        self.db = Database(
+            self.settings.database_url,
+            pool_size=self.settings.worker_concurrency * 3,
+        )
         self.archive = ConversationArchiveStore(
             LocalArchiveBackend(self.settings.archive_local_dir)
         )

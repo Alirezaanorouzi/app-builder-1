@@ -101,7 +101,7 @@ class Settings:
             conversation_dir=conversation_dir,
             workspace_staging_dir=workspace_staging_dir,
             archive_local_dir=archive_local_dir,
-            worker_concurrency=int(os.environ.get("WORKER_CONCURRENCY", "2")),
+            worker_concurrency=int(os.environ.get("WORKER_CONCURRENCY", "5")),
             worker_wake_concurrency=int(os.environ.get("WORKER_WAKE_CONCURRENCY", "2")),
             poll_seconds=float(os.environ.get("WORKER_POLL_SECONDS", "1")),
             sandbox_stack_wait_seconds=float(

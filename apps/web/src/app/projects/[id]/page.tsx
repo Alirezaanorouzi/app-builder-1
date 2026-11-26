@@ -149,7 +149,13 @@ export default function ProjectPage() {
   }
 
   async function stop() {
-    await fetch(`/api/projects/${id}/runs`, { method: "DELETE" });
+    setActiveStatus(null);
+    setRunStartedAt(null);
+    try {
+      await fetch(`/api/projects/${id}/runs`, { method: "DELETE" });
+    } catch {
+      /* stream will restore status if the run is still active */
+    }
   }
 
   async function copyPreviewUrl() {

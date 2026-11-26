@@ -65,7 +65,8 @@ export async function DELETE(
   if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { id: projectId } = await params;
   await query(
-    `UPDATE agent_runs SET cancel_requested_at = now()
+    `UPDATE agent_runs
+     SET cancel_requested_at = now(), status = 'cancelled', finished_at = now()
      WHERE project_id = $1 AND user_id = $2 AND status IN ('queued','running')`,
     [projectId, userId],
   );

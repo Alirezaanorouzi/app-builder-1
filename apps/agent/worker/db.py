@@ -14,11 +14,11 @@ from psycopg_pool import ConnectionPool
 
 
 class Database:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, pool_size: int = 16) -> None:
         self.pool = ConnectionPool(
             url,
             min_size=1,
-            max_size=5,
+            max_size=max(8, pool_size),
             open=True,
             kwargs={"row_factory": dict_row},
         )
@@ -121,7 +121,7 @@ class Database:
                 UPDATE agent_runs
                 SET status = %s, finished_at = %s, error_message = %s, iteration_count = %s,
                     live_output = NULL
-                WHERE id = %s
+                WHERE id = %s AND status IN ('queued', 'running')
                 """,
                 (status, datetime.now(timezone.utc), error, iterations, run_id),
             )
