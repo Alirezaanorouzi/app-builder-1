@@ -83,7 +83,7 @@ a {
 .project-main {
   flex: 1;
   padding: 0 1rem;
-  padding-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
   overflow-x: hidden;
 }
 
@@ -126,6 +126,15 @@ a {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  overflow-anchor: none;
+}
+
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: calc(100dvh - 3.5rem - 8.75rem);
+  overflow-anchor: none;
 }
 
 .chat-empty {
@@ -291,7 +300,7 @@ a {
   background: #18181b;
   border: 1px solid #3f3f46;
   border-radius: 1.15rem;
-  padding: 0.5rem 0.55rem 0.5rem 0.65rem;
+  padding: 0.7rem 0.75rem 0.6rem 0.85rem;
   box-shadow: 0 8px 32px #0006;
 }
 
@@ -314,16 +323,16 @@ a {
 
 .composer-input {
   width: 100%;
-  min-height: 2.15rem;
-  max-height: 7.5rem;
+  min-height: 4.25rem;
+  max-height: 8.5rem;
   resize: none;
   border: none;
   outline: none;
   background: transparent;
   color: #fafafa;
   font-family: inherit;
-  font-size: 0.92rem;
-  line-height: 1.45;
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 .composer-input::placeholder {
@@ -333,7 +342,7 @@ a {
 .composer-busy-line {
   flex: 1;
   margin: 0;
-  min-height: 2.15rem;
+  min-height: 4.25rem;
   display: flex;
   align-items: center;
   font-size: 0.88rem;
@@ -351,8 +360,8 @@ a {
 
 .composer-send {
   flex-shrink: 0;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.4rem;
+  height: 2.4rem;
   border: none;
   border-radius: 999px;
   background: #fafafa;

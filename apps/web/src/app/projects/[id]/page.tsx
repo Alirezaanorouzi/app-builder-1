@@ -88,10 +88,20 @@ export default function ProjectPage() {
   useEffect(() => {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (!lastUser || scrollTurnRef.current === lastUser.id) return;
-    scrollTurnRef.current = lastUser.id;
+    const messageId = lastUser.id;
     requestAnimationFrame(() => {
-      const el = document.querySelector(`[data-msg-id="${lastUser.id}"]`);
-      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-msg-id="${CSS.escape(messageId)}"]`,
+        );
+        if (!(el instanceof HTMLElement)) return;
+        scrollTurnRef.current = messageId;
+        const header = document.querySelector(".project-header");
+        const offset =
+          (header instanceof HTMLElement ? header.offsetHeight : 56) + 12;
+        const top = el.getBoundingClientRect().top + window.scrollY - offset;
+        window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      });
     });
   }, [messages]);
 
@@ -170,10 +180,18 @@ export default function ProjectPage() {
     }
   }
 
-  const lastMessage = messages[messages.length - 1];
+  const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
+  const historyMessages =
+    lastUserIndex > 0
+      ? messages.slice(0, lastUserIndex)
+      : lastUserIndex < 0
+        ? messages
+        : [];
+  const turnMessages = lastUserIndex >= 0 ? messages.slice(lastUserIndex) : [];
+  const turnLast = turnMessages[turnMessages.length - 1];
   const replyAfterActivity =
-    lastMessage?.role === "assistant" && activityEvents.length > 0 ? lastMessage : null;
-  const threadMessages = replyAfterActivity ? messages.slice(0, -1) : messages;
+    turnLast?.role === "assistant" && activityEvents.length > 0 ? turnLast : null;
+  const turnBody = replyAfterActivity ? turnMessages.slice(0, -1) : turnMessages;
 
   return (
     <div className="project-shell">
@@ -209,27 +227,34 @@ export default function ProjectPage() {
               {messages.length === 0 ? (
                 <p className="chat-empty">{fa.chatEmpty}</p>
               ) : null}
-              {threadMessages.map((m) => (
+              {historyMessages.map((m) => (
                 <ChatMessage key={m.id} id={m.id} role={m.role} content={m.content} />
               ))}
-              {activityEvents.length > 0 ? (
-                <ActivityRail
-                  events={activityEvents}
-                  open={activityOpen}
-                  live={busy}
-                  onToggle={() => setActivityOpen((v) => !v)}
-                />
-              ) : null}
-              {replyAfterActivity ? (
-                <ChatMessage
-                  key={replyAfterActivity.id}
-                  role={replyAfterActivity.role}
-                  content={replyAfterActivity.content}
-                />
-              ) : null}
-              <ThinkingLoader visible={thinkingVisible} />
-              {busy && liveOutput ? (
-                <ChatMessage role="assistant" content={liveOutput} streaming />
+              {turnMessages.length > 0 ? (
+                <div className="chat-turn">
+                  {turnBody.map((m) => (
+                    <ChatMessage key={m.id} id={m.id} role={m.role} content={m.content} />
+                  ))}
+                  {activityEvents.length > 0 ? (
+                    <ActivityRail
+                      events={activityEvents}
+                      open={activityOpen}
+                      live={busy}
+                      onToggle={() => setActivityOpen((v) => !v)}
+                    />
+                  ) : null}
+                  {replyAfterActivity ? (
+                    <ChatMessage
+                      key={replyAfterActivity.id}
+                      role={replyAfterActivity.role}
+                      content={replyAfterActivity.content}
+                    />
+                  ) : null}
+                  <ThinkingLoader visible={thinkingVisible} />
+                  {busy && liveOutput ? (
+                    <ChatMessage role="assistant" content={liveOutput} streaming />
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </section>

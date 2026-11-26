@@ -63,7 +63,7 @@ export function Composer({
               ) : null}
               <textarea
                 className="composer-input"
-                rows={1}
+                rows={2}
                 value={text}
                 onChange={(e) => onTextChange(e.target.value)}
                 onFocus={onComposerFocus}
