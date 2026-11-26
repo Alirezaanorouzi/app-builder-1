@@ -68,9 +68,9 @@ function mergeDelta(
   const nextRunId = delta.activeRun?.id ?? null;
   const runChanged = nextRunId !== prevRunId;
   let runEvents = prevEvents;
-  if (runChanged) {
-    runEvents = nextRunId ? (delta.runEvents ?? []) : [];
-  } else if (delta.runEvents?.length) {
+  if (runChanged && nextRunId) {
+    runEvents = delta.runEvents ?? [];
+  } else if (!runChanged && delta.runEvents?.length) {
     const seenSeq = new Set(prevEvents.map((e) => e.seq));
     const appended = delta.runEvents.filter((e) => !seenSeq.has(e.seq));
     if (appended.length) runEvents = [...prevEvents, ...appended];

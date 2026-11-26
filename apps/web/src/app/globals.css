@@ -419,6 +419,11 @@ a {
   animation: live-activity-pulse 1.4s ease-in-out infinite;
 }
 
+.live-activity-mark-idle {
+  animation: none;
+  background: #71717a;
+}
+
 .live-activity-text {
   flex: 1;
   min-width: 0;

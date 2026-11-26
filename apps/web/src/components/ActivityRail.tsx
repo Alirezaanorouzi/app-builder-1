@@ -12,11 +12,12 @@ type RunEvent = {
 type Props = {
   events: RunEvent[];
   open: boolean;
+  live: boolean;
   onToggle: () => void;
 };
 
-/** One live line. The latest step replaces the previous one. The arrow opens the full list. */
-export function ActivityRail({ events, open, onToggle }: Props) {
+/** One line. The latest step replaces the previous one. The arrow opens the full list. */
+export function ActivityRail({ events, open, live, onToggle }: Props) {
   const latest = events[events.length - 1];
   const listRef = useRef<HTMLOListElement | null>(null);
   useEffect(() => {
@@ -33,7 +34,7 @@ export function ActivityRail({ events, open, onToggle }: Props) {
         onClick={onToggle}
         aria-expanded={open}
       >
-        <span className="live-activity-mark" aria-hidden />
+        <span className={live ? "live-activity-mark" : "live-activity-mark live-activity-mark-idle"} aria-hidden />
         <span className="live-activity-text" title={runEventTooltip(latest) ?? latest.summary}>
           {latest.summary}
         </span>

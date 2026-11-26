@@ -90,7 +90,7 @@ export function cursorFromSnapshot(update: ProjectStreamUpdate): ProjectStreamCu
     lastMessageId: lastMsg?.id ?? null,
     lastMessageAt: lastMsg?.created_at ?? null,
     activeRunId: update.activeRun?.id ?? null,
-    lastRunEventSeq: lastEvent?.seq ?? -1,
+    lastRunEventSeq: update.activeRun ? (lastEvent?.seq ?? -1) : -1,
   };
 }
 
@@ -110,11 +110,12 @@ export function mergeProjectStreamUpdates(
   let runEvents = prev.runEvents;
   const prevId = prev.activeRun?.id ?? null;
   const nextId = delta.activeRun?.id ?? null;
-  if (prevId !== nextId) {
+  if (prevId !== nextId && nextId) {
     // A new run restarts seq at 0. Keeping the previous run's events makes the
-    // cursor skip every step of the next run.
-    runEvents = nextId ? delta.runEvents : [];
-  } else if (delta.runEvents.length) {
+    // cursor skip every step of the next run. When the run ends, keep the
+    // steps so the activity line can stay on screen.
+    runEvents = delta.runEvents;
+  } else if (prevId === nextId && delta.runEvents.length) {
     const seenSeq = new Set(prev.runEvents.map((e) => e.seq));
     const appended = delta.runEvents.filter((e) => !seenSeq.has(e.seq));
     if (appended.length) {
@@ -152,6 +153,7 @@ async function loadActiveRunAndMeta(projectId: string): Promise<{
   previewWake: ProjectStreamUpdate["previewWake"];
   previewUrl: string | null;
   liveOutput: string | null;
+  latestRunId: string | null;
 }> {
   const runs = await query<{ id: string; status: string; live_output: string | null }>(
     `SELECT id, status, live_output FROM agent_runs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1`,
@@ -180,6 +182,7 @@ async function loadActiveRunAndMeta(projectId: string): Promise<{
     activeRun?.status === "running" ? activeRun.live_output ?? null : null;
   return {
     activeRun,
+    latestRunId: latest?.id ?? null,
     sandbox: sb,
     previewWake: wake.rows[0] ?? null,
     previewUrl,
@@ -204,12 +207,13 @@ export async function loadProjectStreamSnapshot(
   const meta = await loadActiveRunAndMeta(projectId);
   let runEvents: ProjectStreamRunEvent[] = [];
   const activeRun = meta.activeRun;
-  if (activeRun && (activeRun.status === "queued" || activeRun.status === "running")) {
+  const eventsRunId = activeRun?.id ?? meta.latestRunId;
+  if (eventsRunId) {
     const ev = await query<RunEventRow>(
       `SELECT seq, event_class, tool_name, payload
        FROM run_events WHERE run_id = $1
        ORDER BY seq ASC`,
-      [activeRun.id],
+      [eventsRunId],
     );
     runEvents = ev.rows.map((row) => toWireEvent(row));
   }

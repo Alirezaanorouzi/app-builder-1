@@ -87,7 +87,7 @@ export default function ProjectPage() {
   const sandboxWarming = usesVercelRemoteStack(sandbox) && !stackReady;
 
   useEffect(() => {
-    if (!busy) setActivityOpen(false);
+    setActivityOpen(false);
   }, [busy]);
 
   useEffect(() => {
@@ -215,10 +215,11 @@ export default function ProjectPage() {
               {busy && liveOutput ? (
                 <ChatMessage role="assistant" content={liveOutput} streaming />
               ) : null}
-              {busy && activityEvents.length > 0 ? (
+              {activityEvents.length > 0 ? (
                 <ActivityRail
                   events={activityEvents}
                   open={activityOpen}
+                  live={busy}
                   onToggle={() => setActivityOpen((v) => !v)}
                 />
               ) : null}
