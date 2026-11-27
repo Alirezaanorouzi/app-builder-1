@@ -64,6 +64,7 @@ def mint_run_llm_credential(
     run_id: uuid.UUID,
     project_id: uuid.UUID,
     model: str,
+    user_id: str | None = None,
     ttl_seconds: int = 7200,
 ) -> RunLlmCredential:
     key_id = f"run-{run_id.hex}"
@@ -96,6 +97,7 @@ def mint_run_llm_credential(
                 "api_key": virtual,
                 "run_id": str(run_id),
                 "project_id": str(project_id),
+                "user_id": user_id,
                 "model": model,
                 "ttl_seconds": ttl_seconds,
                 "allowed_models": list(settings.liara_models),
@@ -151,6 +153,7 @@ def start_mint_run_llm_credential(
     run_id: uuid.UUID,
     project_id: uuid.UUID,
     model: str,
+    user_id: str | None = None,
 ) -> MintHandle:
     box: dict[str, object] = {}
 
@@ -161,6 +164,7 @@ def start_mint_run_llm_credential(
                 run_id=run_id,
                 project_id=project_id,
                 model=model,
+                user_id=user_id,
             )
         except Exception as exc:
             box["err"] = exc

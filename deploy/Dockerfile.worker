@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     OPENHANDS_SUPPRESS_BANNER=1 \
     LITELLM_LOG=ERROR \
-    PYTHONPATH=/app/apps/agent:/app/packages/archive \
+    PYTHONPATH=/app/apps/agent:/app/packages/archive:/app/services/llm-proxy \
     TEMPLATES_DIR=/app/templates \
     CONVERSATION_DIR=/app/data/conversations \
     ARCHIVE_LOCAL_DIR=/app/data/archives \
@@ -21,6 +21,7 @@ RUN apt-get update \
 
 COPY packages/archive /app/packages/archive
 COPY apps/agent /app/apps/agent
+COPY services/llm-proxy /app/services/llm-proxy
 COPY templates /app/templates
 COPY db/migrations /app/db/migrations
 

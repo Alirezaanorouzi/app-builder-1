@@ -37,6 +37,7 @@ from worker.sandbox_stack import ensure_vercel_remote_stack, persist_vercel_stac
 from worker.claim_listen import listen_for_work  # noqa: E402
 from worker.liara_models import pick_allowed_model  # noqa: E402
 from worker.llm_proxy import MintHandle, start_mint_run_llm_credential  # noqa: E402
+from worker.proxy_server import start_proxy_server  # noqa: E402
 from worker.remote_control import (  # noqa: E402
     fail_stale_runs_with_remote_teardown,
     fail_worker_runs_on_startup_with_remote_teardown,
@@ -76,6 +77,7 @@ class Worker:
         )
 
     def start(self) -> None:
+        start_proxy_server(int(os.environ.get("HEALTH_HTTP_PORT", "8080")))
         fail_worker_runs_on_startup_with_remote_teardown(self.settings, self.db, self.worker_id)
         Path(self.settings.conversation_dir).mkdir(parents=True, exist_ok=True)
         if self.settings.liara_api_key:
@@ -172,11 +174,13 @@ class Worker:
                 self.settings.liara_default_model,
                 self.settings.liara_models,
             )
+            raw_owner = row.get("owner_id") or row.get("user_id")
             mint_handle = start_mint_run_llm_credential(
                 self.settings,
                 run_id=run_id,
                 project_id=project_id,
                 model=liara_model,
+                user_id=str(raw_owner) if raw_owner else None,
             )
 
         try:

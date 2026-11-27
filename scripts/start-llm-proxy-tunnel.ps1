@@ -18,17 +18,25 @@ function Read-Dotenv($path) {
 
 $envMap = Read-Dotenv (Join-Path $Root ".env")
 if (-not $envMap["LLM_PROXY_ADMIN_KEY"]) { throw "Set LLM_PROXY_ADMIN_KEY in .env" }
+if (-not $envMap["DATABASE_URL"]) {
+    $webEnv = Join-Path $Root "apps\web\.env.local"
+    if (Test-Path $webEnv) {
+        $webMap = Read-Dotenv $webEnv
+        if ($webMap["DATABASE_URL"]) { $envMap["DATABASE_URL"] = $webMap["DATABASE_URL"] }
+    }
+}
 
 $port = 8787
 Write-Host "Starting LLM proxy on port $port ..."
 $proxyJob = Start-Job -ScriptBlock {
-    param($root, $admin, $liaraKey, $liaraBase, $port)
+    param($root, $admin, $liaraKey, $liaraBase, $databaseUrl, $port)
     Set-Location (Join-Path $root "services\llm-proxy")
     $env:LLM_PROXY_ADMIN_KEY = $admin
     $env:LIARA_API_KEY = $liaraKey
     $env:LIARA_BASE_URL = $liaraBase
+    if ($databaseUrl) { $env:DATABASE_URL = $databaseUrl }
     python -m uvicorn app:app --host 127.0.0.1 --port $port
-} -ArgumentList $Root, $envMap["LLM_PROXY_ADMIN_KEY"], $envMap["LIARA_API_KEY"], $envMap["LIARA_BASE_URL"], $port
+} -ArgumentList $Root, $envMap["LLM_PROXY_ADMIN_KEY"], $envMap["LIARA_API_KEY"], $envMap["LIARA_BASE_URL"], $envMap["DATABASE_URL"], $port
 
 Start-Sleep -Seconds 3
 Write-Host "Opening public tunnel (npx localtunnel)..."

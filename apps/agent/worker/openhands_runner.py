@@ -254,6 +254,7 @@ def run_agent_turn(
                     run_id=run_id,
                     project_id=project_id,
                     model=liara_model,
+                    user_id=str(owner_id) if owner_id else None,
                 )
             db.set_run_llm_proxy_key_id(run_id, llm_credential.key_id)
             timeline.mark("llm_key_minted")
