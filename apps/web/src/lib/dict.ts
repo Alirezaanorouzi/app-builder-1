@@ -16,14 +16,14 @@ export const fa = {
   running: "در حال ساخت…",
   previewEmpty: "پس از اولین اجرا پیش‌نمایش اینجا نمایش داده می‌شود",
   previewPendingVercel:
-    "در حال بالا آوردن Vercel Sandbox… پس از آماده شدن لینک اینجا می‌آید",
+    "در حال بالا آوردن فضای کاری Vercel… پس از آماده شدن لینک اینجا می‌آید",
   previewWaking:
-    "در حال آماده‌سازی sandbox (Vite و Agent Server)…",
-  sandboxWarming: "sandbox هنوز آماده نیست.",
+    "در حال آماده‌سازی فضای کاری (Vite و Agent Server)…",
+  sandboxWarming: "فضای کاری هنوز آماده نیست.",
   sandboxWarmingHint: "با ارسال پیام روشن می‌شود.",
-  sandboxWarmingComposer: "sandbox هنوز آماده نیست. پیام را بفرستید تا روشن شود.",
+  sandboxWarmingComposer: "فضای کاری هنوز آماده نیست. پیام را بفرستید تا روشن شود.",
   previewLocal: "پیش‌نمایش محلی (Vite روی این سیستم)",
-  previewVercel: "پیش‌نمایش Vercel Sandbox",
+  previewVercel: "پیش‌نمایش فضای کاری Vercel",
   previewOpenLink: "باز کردن در تب جدید",
   previewCopyLink: "کپی لینک",
   previewCopied: "کپی شد",
@@ -34,4 +34,7 @@ export const fa = {
   composerPlaceholderFirst: "چی تو ذهنته، تا بسازیمش …",
   composerPlaceholderFollowUp: "تغییرات رو ایجاد کن",
   chatEmpty: "اولین پیام را بنویسید تا ساخت شروع شود.",
+  usageLimitCooldown: "شما به حد مصرف رسیدید، ساعت {time} دوباره پیام بفرستید",
+  usageLimitBlocked: "شما به حد مصرف رسیدید",
+  upgradePlan: "ارتقای پلن",
 } as const;

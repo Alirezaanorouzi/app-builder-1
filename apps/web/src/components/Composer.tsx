@@ -1,17 +1,36 @@
 import type { KeyboardEvent } from "react";
 import { fa } from "@/lib/dict";
 
+type UsageGate = {
+  state: "open" | "cooldown" | "blocked";
+  resumeAt: string | null;
+};
+
 type Props = {
   text: string;
   busy: boolean;
   warming?: boolean;
   hasMessages?: boolean;
   activeStatus: string | null;
+  usage?: UsageGate | null;
   onTextChange: (v: string) => void;
   onSend: () => void;
   onStop: () => void;
   onRequestWake?: () => void;
 };
+
+function limitCopy(usage: UsageGate) {
+  if (usage.state === "cooldown" && usage.resumeAt) {
+    const time = new Intl.DateTimeFormat("fa-IR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone: "Asia/Tehran",
+    }).format(new Date(usage.resumeAt));
+    return fa.usageLimitCooldown.replace("{time}", time);
+  }
+  return fa.usageLimitBlocked;
+}
 
 export function Composer({
   text,
@@ -19,6 +38,7 @@ export function Composer({
   warming = false,
   hasMessages = false,
   activeStatus,
+  usage = null,
   onTextChange,
   onSend,
   onStop,
@@ -29,6 +49,7 @@ export function Composer({
   const placeholder = hasMessages
     ? fa.composerPlaceholderFollowUp
     : fa.composerPlaceholderFirst;
+  const limited = usage != null && usage.state !== "open";
 
   function onComposerFocus() {
     if (!busy) onRequestWake?.();
@@ -37,12 +58,20 @@ export function Composer({
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!busy && text.trim()) onSend();
+      if (!busy && !limited && text.trim()) onSend();
     }
   }
 
   return (
     <div className="composer-shell" role="region" aria-label={fa.chat}>
+      {limited && usage ? (
+        <div className="usage-limit-bar" role="status">
+          <p>{limitCopy(usage)}</p>
+          <button type="button" className="usage-limit-upgrade">
+            {fa.upgradePlan}
+          </button>
+        </div>
+      ) : null}
       <div className="composer-card">
         {busy ? (
           <div className="composer-row">
@@ -70,13 +99,14 @@ export function Composer({
                 onKeyDown={onKeyDown}
                 placeholder={placeholder}
                 aria-label={placeholder}
+                disabled={limited}
               />
             </div>
             <button
               type="button"
               className="composer-send"
               onClick={onSend}
-              disabled={!text.trim()}
+              disabled={limited || !text.trim()}
               aria-label={fa.send}
             >
               <SendIcon />

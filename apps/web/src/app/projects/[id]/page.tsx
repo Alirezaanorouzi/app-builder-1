@@ -8,6 +8,7 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { Composer } from "@/components/Composer";
 import { ThinkingLoader } from "@/components/ThinkingLoader";
 import { fa } from "@/lib/dict";
+import type { UsageGate } from "@/lib/usage-limit";
 import { isActivityChipEvent } from "@/lib/run-events";
 import { shouldHideThinkingLoader, THINKING_DELAY_MS } from "@/lib/run-thinking";
 import { useSandboxWake } from "@/hooks/useSandboxWake";
@@ -44,6 +45,7 @@ export default function ProjectPage() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [copiedPreview, setCopiedPreview] = useState(false);
   const [sendPending, setSendPending] = useState(false);
+  const [usage, setUsage] = useState<UsageGate | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [thinkingVisible, setThinkingVisible] = useState(false);
   const sendingRef = useRef(false);
@@ -80,6 +82,30 @@ export default function ProjectPage() {
 
   const stackReady = isSandboxStackReady(sandbox, previewUrl, wakeInFlight);
   const sandboxWarming = usesVercelRemoteStack(sandbox) && !stackReady;
+
+  useEffect(() => {
+    let cancel = false;
+    fetch("/api/me/usage-limit")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((gate: UsageGate | null) => {
+        if (!cancel && gate?.state) setUsage(gate);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+    };
+  }, [id, busy]);
+
+  useEffect(() => {
+    if (usage?.state !== "cooldown" || !usage.resumeAt) return;
+    const wait = new Date(usage.resumeAt).getTime() - Date.now();
+    const timer = window.setTimeout(() => {
+      setUsage((prev) =>
+        prev?.state === "cooldown" ? { ...prev, state: "open", resumeAt: null } : prev,
+      );
+    }, Math.max(0, wait));
+    return () => window.clearTimeout(timer);
+  }, [usage]);
 
   useEffect(() => {
     setActivityOpen(false);
@@ -130,7 +156,7 @@ export default function ProjectPage() {
 
   async function send() {
     const content = text.trim();
-    if (!content || busy || sendingRef.current) return;
+    if (!content || busy || sendingRef.current || (usage && usage.state !== "open")) return;
     sendingRef.current = true;
     const optimisticId = `opt-${Date.now()}`;
     setSendPending(true);
@@ -146,10 +172,18 @@ export default function ProjectPage() {
         body: JSON.stringify({ content, model }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          usage?: UsageGate;
+        };
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setText(content);
         setActiveStatus(null);
         setRunStartedAt(null);
+        if (body.usage?.state && body.usage.state !== "open") {
+          setUsage(body.usage);
+          return;
+        }
         alert(body.error ?? "ارسال ناموفق بود");
         return;
       }
@@ -349,6 +383,7 @@ export default function ProjectPage() {
           warming={sandboxWarming}
           hasMessages={messages.length > 0}
           activeStatus={activeStatus}
+          usage={usage}
           onTextChange={setText}
           onSend={send}
           onStop={stop}

@@ -296,6 +296,40 @@ a {
 
 /* ——— Cursor-style composer (no activity bar inside) ——— */
 
+.usage-limit-bar {
+  pointer-events: auto;
+  max-width: 28rem;
+  margin: 0 auto 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.45rem 0.45rem 0.45rem 0.85rem;
+  border-radius: 999px;
+  background: #27272a;
+  color: #e4e4e7;
+  direction: rtl;
+}
+
+.usage-limit-bar p {
+  flex: 1;
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.usage-limit-upgrade {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: #fafafa;
+  color: #18181b;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+}
+
 .composer-shell {
   position: fixed;
   bottom: 0;

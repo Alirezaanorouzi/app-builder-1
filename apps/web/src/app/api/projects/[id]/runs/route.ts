@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { listLiaraModelsFromEnv, pickLiaraModel } from "@/lib/liara-models";
+import { loadUsageGate } from "@/lib/usage-limit";
 
 export async function POST(
   req: Request,
@@ -27,6 +28,14 @@ export async function POST(
     userId,
   ]);
   if (!proj.rows[0]) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const usage = await loadUsageGate(userId);
+  if (usage.state !== "open") {
+    return NextResponse.json(
+      { error: "usage_limit", usage },
+      { status: 402 },
+    );
+  }
 
   try {
     const run = await query<{ id: string }>(
