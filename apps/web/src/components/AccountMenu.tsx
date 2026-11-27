@@ -11,6 +11,7 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const [creating, setCreating] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
 
@@ -50,6 +51,23 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
     };
   }, [open]);
 
+  async function createProject() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: fa.newProject }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { id?: string };
+      if (data.id) window.location.href = `/projects/${data.id}`;
+    } finally {
+      setCreating(false);
+    }
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
@@ -76,6 +94,15 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
             {me?.email ? <span>{me.email}</span> : null}
           </div>
           <p className="account-menu-label">{fa.projects}</p>
+          <button
+            type="button"
+            className="account-menu-new"
+            role="menuitem"
+            onClick={() => void createProject()}
+            disabled={creating}
+          >
+            {fa.newProject}
+          </button>
           <ul className="account-menu-projects">
             {projects == null ? (
               <li className="account-menu-empty">…</li>
@@ -107,7 +134,7 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
 
 function AccountIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
       <path
         fill="none"
         stroke="currentColor"
