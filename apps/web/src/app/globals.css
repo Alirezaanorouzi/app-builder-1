@@ -541,8 +541,8 @@ iframe.preview {
   align-items: center;
   gap: 0.35rem;
   margin-top: 0.5rem;
-  padding: 0.4rem 0.45rem 0.4rem 0.75rem;
-  border-radius: 0.65rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.9rem;
+  border-radius: 999px;
   background: #27272a;
   direction: ltr;
   text-align: left;
@@ -574,7 +574,7 @@ iframe.preview {
   height: 2rem;
   padding: 0;
   border: none;
-  border-radius: 0.35rem;
+  border-radius: 999px;
   background: transparent;
   color: #a1a1aa;
   cursor: pointer;
