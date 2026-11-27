@@ -179,6 +179,47 @@ class Database:
                 (project_id, run_id, role, content),
             )
 
+    def insert_llm_usage(
+        self,
+        user_id: uuid.UUID,
+        run_id: uuid.UUID,
+        *,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cache_read_tokens: int,
+        reasoning_tokens: int,
+        cost_usd: float,
+        cost_toman: float,
+        provider_response_id: str,
+    ) -> None:
+        with self.conn() as c:
+            c.execute(
+                """
+                INSERT INTO usage_ledger (
+                  user_id, run_id, model, prompt_tokens, completion_tokens,
+                  cache_read_tokens, reasoning_tokens, cost_usd, cost_toman,
+                  provider_response_id, source
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'agent')
+                ON CONFLICT (run_id, provider_response_id)
+                  WHERE provider_response_id IS NOT NULL AND provider_response_id <> ''
+                  DO NOTHING
+                """,
+                (
+                    user_id,
+                    run_id,
+                    model or "unknown",
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_read_tokens,
+                    reasoning_tokens,
+                    cost_usd,
+                    cost_toman,
+                    provider_response_id,
+                ),
+            )
+
     def insert_run_event(
         self,
         run_id: uuid.UUID,

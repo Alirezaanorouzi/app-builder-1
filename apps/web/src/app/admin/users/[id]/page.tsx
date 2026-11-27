@@ -27,6 +27,15 @@ type Detail = {
     project_id: string;
     title: string;
   }[];
+  usage?: {
+    toman: number;
+    usd: number;
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens: number;
+    reasoningTokens: number;
+    calls: number;
+  };
 };
 
 function when(value: string) {
@@ -79,6 +88,9 @@ export default function AdminUserPage() {
           {detail ? (
             <p className="admin-muted">
               {detail.user.email} · signed up {when(detail.user.created_at)}
+              {detail.usage
+                ? ` · ${detail.usage.toman.toLocaleString("en-US", { maximumFractionDigits: 1 })} toman · ${detail.usage.calls} calls · ${detail.usage.promptTokens.toLocaleString("en-US")} prompt · ${detail.usage.completionTokens.toLocaleString("en-US")} completion · ${detail.usage.cacheReadTokens.toLocaleString("en-US")} cached`
+                : ""}
             </p>
           ) : null}
         </div>

@@ -138,7 +138,7 @@ export async function loadOverview() {
   const day = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const week = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const prevWeek = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-  const [allTime, last7, northStar, previousNorthStar, runs, median, activeDay] =
+  const [allTime, last7, northStar, previousNorthStar, runs, median, activeDay, spend] =
     await Promise.all([
       funnel(null),
       funnel(week),
@@ -176,6 +176,16 @@ export async function loadOverview() {
          ) s`,
         [day.toISOString()],
       ),
+      query<{ toman: number; usd: number; prompt_tokens: number; completion_tokens: number }>(
+        `SELECT
+           COALESCE(SUM(cost_toman), 0) AS toman,
+           COALESCE(SUM(cost_usd), 0) AS usd,
+           COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
+           COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens
+         FROM usage_ledger
+         WHERE created_at >= $1`,
+        [week.toISOString()],
+      ),
     ]);
   const runRow = runs.rows[0];
   const finished = Number(runRow?.finished ?? 0);
@@ -192,6 +202,12 @@ export async function loadOverview() {
     medianMinutesToFirstOpen:
       minutes == null || Number.isNaN(Number(minutes)) ? null : Number(minutes),
     activeLastDay: activeDay,
+    spendLast7: {
+      toman: Number(spend.rows[0]?.toman ?? 0),
+      usd: Number(spend.rows[0]?.usd ?? 0),
+      promptTokens: Number(spend.rows[0]?.prompt_tokens ?? 0),
+      completionTokens: Number(spend.rows[0]?.completion_tokens ?? 0),
+    },
   };
 }
 
@@ -215,6 +231,11 @@ export type AdminUserRow = {
   activated: boolean;
   recent_user_messages: AdminUserMessage[];
   preview_urls: string[];
+  cost_toman: number;
+  cost_usd: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  llm_calls: number;
 };
 
 function asMessages(value: unknown): AdminUserMessage[] {
@@ -297,7 +318,17 @@ export async function loadAdminUsers(): Promise<AdminUserRow[]> {
          WHERE p.owner_id = u.id
            AND p.status <> 'deleted'
            AND COALESCE(s.preview_url, '') <> ''
-       ) AS preview_urls
+       ) AS preview_urls,
+       (SELECT COALESCE(SUM(cost_toman), 0) FROM usage_ledger ul
+        WHERE ul.user_id = u.id) AS cost_toman,
+       (SELECT COALESCE(SUM(cost_usd), 0) FROM usage_ledger ul
+        WHERE ul.user_id = u.id) AS cost_usd,
+       (SELECT COALESCE(SUM(prompt_tokens), 0)::bigint FROM usage_ledger ul
+        WHERE ul.user_id = u.id) AS prompt_tokens,
+       (SELECT COALESCE(SUM(completion_tokens), 0)::bigint FROM usage_ledger ul
+        WHERE ul.user_id = u.id) AS completion_tokens,
+       (SELECT COUNT(*)::int FROM usage_ledger ul
+        WHERE ul.user_id = u.id) AS llm_calls
      FROM users u
      WHERE u.status <> 'deleted'
      ORDER BY u.created_at DESC`,
@@ -312,6 +343,11 @@ export async function loadAdminUsers(): Promise<AdminUserRow[]> {
     activated: Boolean(row.activated),
     recent_user_messages: asMessages(row.recent_user_messages),
     preview_urls: asUrls(row.preview_urls),
+    cost_toman: Number(row.cost_toman),
+    cost_usd: Number(row.cost_usd),
+    prompt_tokens: Number(row.prompt_tokens),
+    completion_tokens: Number(row.completion_tokens),
+    llm_calls: Number(row.llm_calls),
   }));
 }
 
@@ -328,7 +364,7 @@ export async function loadAdminUser(userId: string) {
     [userId],
   );
   if (!user.rows[0]) return null;
-  const [projects, messages] = await Promise.all([
+  const [projects, messages, usage] = await Promise.all([
     query<{
       id: string;
       title: string;
@@ -365,7 +401,29 @@ export async function loadAdminUser(userId: string) {
        LIMIT 200`,
       [userId],
     ),
+    query<{
+      toman: number;
+      usd: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      cache_read_tokens: number;
+      reasoning_tokens: number;
+      calls: number;
+    }>(
+      `SELECT
+         COALESCE(SUM(cost_toman), 0) AS toman,
+         COALESCE(SUM(cost_usd), 0) AS usd,
+         COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
+         COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
+         COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens,
+         COALESCE(SUM(reasoning_tokens), 0)::bigint AS reasoning_tokens,
+         COUNT(*)::int AS calls
+       FROM usage_ledger
+       WHERE user_id = $1`,
+      [userId],
+    ),
   ]);
+  const spend = usage.rows[0];
   return {
     user: user.rows[0],
     projects: projects.rows.map((p) => ({
@@ -374,5 +432,14 @@ export async function loadAdminUser(userId: string) {
       copies: Number(p.copies),
     })),
     messages: [...messages.rows].reverse(),
+    usage: {
+      toman: Number(spend?.toman ?? 0),
+      usd: Number(spend?.usd ?? 0),
+      promptTokens: Number(spend?.prompt_tokens ?? 0),
+      completionTokens: Number(spend?.completion_tokens ?? 0),
+      cacheReadTokens: Number(spend?.cache_read_tokens ?? 0),
+      reasoningTokens: Number(spend?.reasoning_tokens ?? 0),
+      calls: Number(spend?.calls ?? 0),
+    },
   };
 }

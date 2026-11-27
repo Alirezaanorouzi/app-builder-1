@@ -21,6 +21,12 @@ type Overview = {
   runSuccess: { succeeded: number; finished: number; rate: number } | null;
   medianMinutesToFirstOpen: number | null;
   activeLastDay: number;
+  spendLast7?: {
+    toman: number;
+    usd: number;
+    promptTokens: number;
+    completionTokens: number;
+  };
 };
 
 type UserRow = {
@@ -37,6 +43,10 @@ type UserRow = {
   activated: boolean;
   recent_user_messages?: { content: string; created_at: string; title: string }[];
   preview_urls?: string[];
+  cost_toman?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  llm_calls?: number;
 };
 
 type Flag = {
@@ -56,6 +66,10 @@ const FUNNEL_ROWS: { key: keyof Funnel; label: string }[] = [
   { key: "previewCopies", label: "Copied the link" },
   { key: "followUps", label: "Sent a follow-up" },
 ];
+
+function toman(value: number) {
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)} toman`;
+}
 
 function when(value: string) {
   const date = new Date(value);
@@ -145,6 +159,10 @@ export default function AdminPage() {
         </p>
         <div className="admin-stats">
           <div>
+            <span>LLM spend, 7 days</span>
+            <strong>{overview?.spendLast7 ? toman(overview.spendLast7.toman) : overview ? "—" : "…"}</strong>
+          </div>
+          <div>
             <span>Active last day</span>
             <strong>{overview ? overview.activeLastDay : "…"}</strong>
           </div>
@@ -207,6 +225,7 @@ export default function AdminPage() {
                 <th>Projects</th>
                 <th>Messages</th>
                 <th>Replies</th>
+                <th>LLM toman</th>
                 <th>Opens</th>
                 <th>Copies</th>
                 <th>Last activity</th>
@@ -258,6 +277,14 @@ export default function AdminPage() {
                   <td>{user.projects}</td>
                   <td>{user.user_messages}</td>
                   <td>{user.agent_replies}</td>
+                  <td className="admin-spend">
+                    {toman(user.cost_toman ?? 0)}
+                    <div className="admin-muted">
+                      {(user.llm_calls ?? 0).toLocaleString("en-US")} calls ·{" "}
+                      {(user.prompt_tokens ?? 0).toLocaleString("en-US")} in ·{" "}
+                      {(user.completion_tokens ?? 0).toLocaleString("en-US")} out
+                    </div>
+                  </td>
                   <td>{user.preview_opens}</td>
                   <td>{user.preview_copies}</td>
                   <td>{when(user.last_activity)}</td>

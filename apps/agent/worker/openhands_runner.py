@@ -25,6 +25,8 @@ from worker.builder_prompt import BUILDER_SYSTEM_PROMPT
 from worker.remote_conversation_sync import ensure_conversation_id_matches_remote_llm
 from worker.run_lifecycle import CancelMonitor
 from worker.run_timeline import RunTimeline
+from worker.liara_user import bind_liara_end_user, reset_liara_end_user
+from worker.llm_usage import UsageRecorder
 from worker.stream_tokens import RunLiveStreamAppender
 from worker.workspace.vercel_ws import VercelWorkspace
 
@@ -145,6 +147,8 @@ def run_agent_turn(
     project_id = uuid.UUID(str(run_row["project_id"]))
     run_id = uuid.UUID(str(run_row["id"]))
     conversation_id = uuid.UUID(str(run_row["conversation_id"]))
+    raw_owner = run_row.get("owner_id") or run_row.get("user_id")
+    owner_id = uuid.UUID(str(raw_owner)) if raw_owner else None
     if timeline is None:
         timeline = RunTimeline(run_id)
 
@@ -287,6 +291,7 @@ def run_agent_turn(
 
     db.clear_run_live_output(run_id)
     stream_appender = RunLiveStreamAppender(db, run_id)
+    usage_recorder = UsageRecorder()
     event_seq_holder = {"n": db.next_event_seq(run_id)}
     assistant_chunks: list[str] = []
     finish_messages: list[str] = []
@@ -342,6 +347,24 @@ def run_agent_turn(
             return
         timeline.mark("first_token", once=True)
         stream_appender.feed(chunk)
+        if owner_id is not None:
+            usage = usage_recorder.observe(chunk, model_fallback=str(run_row.get("model") or ""))
+            if usage is not None:
+                try:
+                    db.insert_llm_usage(
+                        owner_id,
+                        run_id,
+                        model=usage.model or str(run_row.get("model") or ""),
+                        prompt_tokens=usage.prompt_tokens,
+                        completion_tokens=usage.completion_tokens,
+                        cache_read_tokens=usage.cache_read_tokens,
+                        reasoning_tokens=usage.reasoning_tokens,
+                        cost_usd=usage.cost_usd,
+                        cost_toman=usage.cost_toman,
+                        provider_response_id=usage.response_id,
+                    )
+                except Exception:
+                    logger.exception("llm usage insert failed")
         if on_assistant_token:
             from worker.stream_tokens import extract_stream_delta
 
@@ -476,7 +499,12 @@ def run_agent_turn(
         agent_run_armed.set()
         stall_thread.start()
         cancel_mon.start()
-        conversation.run()
+        end_user = bind_liara_end_user(str(owner_id)) if owner_id else None
+        try:
+            conversation.run()
+        finally:
+            if end_user is not None:
+                reset_liara_end_user(end_user)
         timeline.mark("conversation_run_done")
     except Exception as e:
         if _is_max_iterations_error(e):
