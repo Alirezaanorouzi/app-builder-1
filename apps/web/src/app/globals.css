@@ -191,10 +191,12 @@ a {
 }
 
 .account-menu-new {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   width: 100%;
   margin-bottom: 0.2rem;
-  padding: 0.45rem;
+  padding: 0.4rem 0.45rem;
   border: none;
   border-radius: 0.65rem;
   background: transparent;
@@ -203,6 +205,54 @@ a {
   font-size: 0.86rem;
   text-align: right;
   cursor: pointer;
+}
+
+.account-menu-new span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: #3f3f46;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.account-menu-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.account-menu-name input {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #3f3f46;
+  border-radius: 0.65rem;
+  background: #09090b;
+  color: #fafafa;
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.account-menu-create {
+  padding: 0.28rem 0.7rem;
+  border: none;
+  border-radius: 999px;
+  background: #fafafa;
+  color: #09090b;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.account-menu-create:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .account-menu-new:hover:not(:disabled) {

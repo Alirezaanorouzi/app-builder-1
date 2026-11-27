@@ -12,7 +12,10 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
   const [me, setMe] = useState<Me | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [creating, setCreating] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [title, setTitle] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
   const panelId = useId();
 
   useEffect(() => {
@@ -41,7 +44,13 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      if (naming) {
+        setNaming(false);
+        setTitle("");
+        return;
+      }
+      setOpen(false);
     }
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -49,16 +58,28 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
+  }, [open, naming]);
+
+  useEffect(() => {
+    if (!open) {
+      setNaming(false);
+      setTitle("");
+    }
   }, [open]);
 
+  useEffect(() => {
+    if (naming) nameRef.current?.focus();
+  }, [naming]);
+
   async function createProject() {
-    if (creating) return;
+    const nextTitle = title.trim();
+    if (!nextTitle || creating) return;
     setCreating(true);
     try {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: fa.newProject }),
+        body: JSON.stringify({ title: nextTitle }),
       });
       if (!res.ok) return;
       const data = (await res.json()) as { id?: string };
@@ -94,15 +115,33 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
             {me?.email ? <span>{me.email}</span> : null}
           </div>
           <p className="account-menu-label">{fa.projects}</p>
-          <button
-            type="button"
-            className="account-menu-new"
-            role="menuitem"
-            onClick={() => void createProject()}
-            disabled={creating}
-          >
-            {fa.newProject}
-          </button>
+          {naming ? (
+            <form
+              className="account-menu-name"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createProject();
+              }}
+            >
+              <input
+                ref={nameRef}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder={fa.projectName}
+                aria-label={fa.projectName}
+                disabled={creating}
+                maxLength={80}
+              />
+              <button type="submit" className="account-menu-create" disabled={creating || !title.trim()}>
+                {fa.createProject}
+              </button>
+            </form>
+          ) : (
+            <button type="button" className="account-menu-new" role="menuitem" onClick={() => setNaming(true)}>
+              <span aria-hidden>+</span>
+              {fa.newProject}
+            </button>
+          )}
           <ul className="account-menu-projects">
             {projects == null ? (
               <li className="account-menu-empty">…</li>

@@ -40,4 +40,6 @@ export const fa = {
   account: "حساب کاربری",
   logout: "خروج",
   noProjects: "پروژه‌ای نیست",
+  projectName: "نام پروژه",
+  createProject: "ایجاد پروژه",
 } as const;
