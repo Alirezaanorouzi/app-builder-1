@@ -80,10 +80,151 @@ a {
 .project-header {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 30;
   padding: 0.65rem 1rem 0.35rem;
   background: #09090bf0;
   backdrop-filter: blur(8px);
+}
+
+.home-header {
+  position: relative;
+  min-height: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.home-header h1 {
+  margin: 0;
+  text-align: center;
+  font-size: 1.35rem;
+}
+
+.account-menu {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.65rem;
+  z-index: 31;
+}
+
+.home-header .account-menu {
+  top: 0.15rem;
+  right: 0;
+}
+
+.account-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: #27272a;
+  color: #e4e4e7;
+  cursor: pointer;
+}
+
+.account-menu-button:hover,
+.account-menu-button[aria-expanded="true"] {
+  background: #3f3f46;
+}
+
+.account-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  width: 15rem;
+  max-height: min(70dvh, 22rem);
+  overflow: auto;
+  padding: 0.75rem 0.55rem 0.5rem;
+  border: 1px solid #3f3f46;
+  border-radius: 1rem;
+  background: #18181b;
+  box-shadow: 0 12px 32px #0008;
+  direction: rtl;
+  text-align: right;
+  animation: account-menu-in 140ms ease-out;
+}
+
+@keyframes account-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.account-menu-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0 0.45rem 0.65rem;
+}
+
+.account-menu-identity strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.account-menu-identity span,
+.account-menu-empty {
+  font-size: 0.75rem;
+  color: #a1a1aa;
+  overflow-wrap: anywhere;
+}
+
+.account-menu-label {
+  margin: 0;
+  padding: 0.15rem 0.45rem 0.3rem;
+  font-size: 0.72rem;
+  color: #71717a;
+}
+
+.account-menu-projects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.account-menu-projects a {
+  display: block;
+  padding: 0.45rem 0.45rem;
+  border-radius: 0.65rem;
+  color: #e4e4e7;
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.account-menu-projects a:hover,
+.account-menu-projects a[aria-current="page"] {
+  background: #27272a;
+}
+
+.account-menu-empty {
+  padding: 0.35rem 0.45rem 0.5rem;
+}
+
+.account-menu-logout {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.45rem;
+  border: none;
+  border-radius: 0.65rem;
+  background: transparent;
+  color: #fafafa;
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: right;
+  cursor: pointer;
+}
+
+.account-menu-logout:hover {
+  background: #27272a;
 }
 
 .project-main {

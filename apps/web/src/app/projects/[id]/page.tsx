@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useProjectStream } from "@/hooks/useProjectStream";
 import { useParams } from "next/navigation";
+import { AccountMenu } from "@/components/AccountMenu";
 import { ActivityRail } from "@/components/ActivityRail";
 import { ChatMessage } from "@/components/ChatMessage";
 import { Composer } from "@/components/Composer";
@@ -239,6 +240,7 @@ export default function ProjectPage() {
   return (
     <div className={tab === "preview" ? "project-shell project-shell-preview" : "project-shell"}>
       <header className="project-header">
+        <AccountMenu currentProjectId={id} />
         <div className="tabs">
           <button
             type="button"

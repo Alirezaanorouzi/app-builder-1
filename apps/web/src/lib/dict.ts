@@ -37,4 +37,7 @@ export const fa = {
   usageLimitCooldown: "شما به حد مصرف رسیدید، ساعت {time} دوباره پیام بفرستید",
   usageLimitBlocked: "شما به حد مصرف رسیدید",
   upgradePlan: "ارتقای پلن",
+  account: "حساب کاربری",
+  logout: "خروج",
+  noProjects: "پروژه‌ای نیست",
 } as const;

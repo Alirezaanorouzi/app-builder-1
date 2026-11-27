@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { AccountMenu } from "@/components/AccountMenu";
 import { fa } from "@/lib/dict";
 
 type Project = { id: string; title: string; status: string };
@@ -34,16 +35,9 @@ export default function HomePage() {
 
   return (
     <main className="container">
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <header className="home-header">
         <h1>{fa.appName}</h1>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          style={{ width: "auto" }}
-          onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => (window.location.href = "/login"))}
-        >
-          خروج
-        </button>
+        <AccountMenu />
       </header>
       <h2>{fa.projects}</h2>
       {loading ? <p>…</p> : null}
