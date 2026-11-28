@@ -14,7 +14,8 @@ $files = @(
     "db\migrations\0007_run_queue_sandbox_meta.sql",
     "db\migrations\0008_admin_metrics.sql",
     "db\migrations\0009_llm_usage_cost.sql",
-    "db\migrations\0010_user_phone.sql"
+    "db\migrations\0010_user_phone.sql",
+    "db\migrations\0011_phone_otp.sql"
 )
 foreach ($rel in $files) {
     $path = Join-Path $Root $rel

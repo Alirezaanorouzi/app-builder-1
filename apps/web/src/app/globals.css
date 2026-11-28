@@ -1006,6 +1006,21 @@ iframe.preview {
   text-decoration: none;
 }
 
+.auth-text-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #d4d4d8;
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.auth-text-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .home-screen {
   min-height: 100dvh;
   display: flex;
