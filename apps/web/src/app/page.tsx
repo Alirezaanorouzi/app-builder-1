@@ -7,7 +7,7 @@ export default function HomePage() {
     fetch("/api/enter")
       .then((res) => {
         if (res.status === 401) {
-          window.location.href = "/login";
+          window.location.href = "/register";
           return null;
         }
         return res.ok ? res.json() : null;
@@ -16,7 +16,7 @@ export default function HomePage() {
         if (data?.projectId) window.location.href = `/projects/${data.projectId}`;
       })
       .catch(() => {
-        window.location.href = "/login";
+        window.location.href = "/register";
       });
   }, []);
 

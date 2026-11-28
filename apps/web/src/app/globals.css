@@ -602,6 +602,72 @@ a {
   cursor: pointer;
 }
 
+.composer-prompts {
+  pointer-events: auto;
+  max-width: 28rem;
+  margin: 0 auto 0.4rem;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+
+.composer-prompts-viewport {
+  overflow: hidden;
+}
+
+.composer-prompts-track {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  width: max-content;
+  padding: 0.1rem 0;
+  animation: composer-prompt-marquee 50s linear infinite;
+}
+
+.composer-prompts-track:hover {
+  animation-play-state: paused;
+}
+
+.composer-prompt-chip {
+  flex-shrink: 0;
+  padding: 0.38rem 0.9rem;
+  border: none;
+  border-radius: 999px;
+  background: #3f3f46;
+  color: #e4e4e7;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.composer-prompt-chip:hover {
+  background: #52525b;
+}
+
+@keyframes composer-prompt-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-prompts-track {
+    animation: none;
+    overflow-x: auto;
+    max-width: 100%;
+    scrollbar-width: none;
+  }
+
+  .composer-prompts-track::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 .composer-shell {
   position: fixed;
   bottom: 0;

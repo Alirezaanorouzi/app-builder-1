@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from "react";
+import { ComposerPrompts } from "@/components/ComposerPrompts";
 import { fa } from "@/lib/dict";
 
 type UsageGate = {
@@ -72,6 +73,10 @@ export function Composer({
           </button>
         </div>
       ) : null}
+      <ComposerPrompts
+        visible={!busy && !limited && !hasMessages && !text.trim()}
+        onPick={(value) => onTextChange(value)}
+      />
       <div className="composer-card">
         {busy ? (
           <div className="composer-row">

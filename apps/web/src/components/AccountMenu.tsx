@@ -92,7 +92,7 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+    window.location.href = "/register";
   }
 
   const phoneLabel = formatIranMobile(me?.phone);
