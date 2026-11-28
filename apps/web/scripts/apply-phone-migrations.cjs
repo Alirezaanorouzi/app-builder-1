@@ -12,7 +12,10 @@ async function main() {
     process.exit(1);
   }
   const dir = path.join(__dirname, "..", "db", "migrations");
-  const pool = new Pool({ connectionString: url });
+  const pool = new Pool({
+    connectionString: url,
+    ssl: /liara\.cloud/i.test(url) ? false : undefined,
+  });
   try {
     for (const name of FILES) {
       const file = path.join(dir, name);
