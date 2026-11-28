@@ -3,8 +3,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { fa } from "@/lib/dict";
+import { formatIranMobile } from "@/lib/phone";
 
-type Me = { email: string; displayName: string | null };
+type Me = { email: string | null; displayName: string | null; phone: string | null };
 type Project = { id: string; title: string };
 
 export function AccountMenu({ currentProjectId }: { currentProjectId?: string }) {
@@ -27,7 +28,7 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
     ])
       .then(([profile, list]) => {
         if (cancel) return;
-        if (profile?.email) setMe(profile as Me);
+        if (profile?.email || profile?.phone) setMe(profile as Me);
         setProjects(Array.isArray(list?.projects) ? list.projects : []);
       })
       .catch(() => {
@@ -94,7 +95,9 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
     window.location.href = "/login";
   }
 
-  const name = me?.displayName?.trim() || me?.email || "…";
+  const phoneLabel = formatIranMobile(me?.phone);
+  const name = me?.displayName?.trim() || phoneLabel || me?.email || "…";
+  const contact = phoneLabel || me?.email || "";
 
   return (
     <div className="account-menu" ref={rootRef}>
@@ -112,7 +115,7 @@ export function AccountMenu({ currentProjectId }: { currentProjectId?: string })
         <div className="account-menu-panel" id={panelId} role="menu">
           <div className="account-menu-identity">
             <strong>{name}</strong>
-            {me?.email ? <span>{me.email}</span> : null}
+            {contact && contact !== name ? <span>{contact}</span> : null}
           </div>
           <p className="account-menu-label">{fa.projects}</p>
           {naming ? (

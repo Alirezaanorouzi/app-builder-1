@@ -1,19 +1,18 @@
 import { NextResponse } from "next/server";
-import { createSession, verifyPassword } from "@/lib/auth";
+import { createSession } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { normalizeIranMobile } from "@/lib/phone";
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const email = String(body.email ?? "").trim().toLowerCase();
-  const password = String(body.password ?? "");
-  const res = await query<{ id: string; password_hash: string }>(
-    `SELECT id, password_hash FROM users WHERE email = $1 AND status = 'active'`,
-    [email],
+  const phone = normalizeIranMobile(String(body.phone ?? ""));
+  if (!phone) return NextResponse.json({ error: "شماره موبایل نادرست است" }, { status: 400 });
+  const res = await query<{ id: string }>(
+    `SELECT id FROM users WHERE phone = $1 AND status = 'active'`,
+    [phone],
   );
   const user = res.rows[0];
-  if (!user || !(await verifyPassword(user.password_hash, password))) {
-    return NextResponse.json({ error: "ایمیل یا رمز نادرست" }, { status: 401 });
-  }
+  if (!user) return NextResponse.json({ error: "این شماره ثبت نشده" }, { status: 401 });
   await createSession(user.id, req.headers.get("user-agent") ?? undefined);
   return NextResponse.json({ ok: true });
 }
