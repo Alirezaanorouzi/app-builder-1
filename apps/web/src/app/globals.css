@@ -955,6 +955,138 @@ iframe.preview {
   text-decoration: none;
 }
 
+.home-screen {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 1.25rem 2rem;
+  background:
+    linear-gradient(180deg, rgba(9, 9, 11, 0.28) 0%, rgba(9, 9, 11, 0.62) 55%, rgba(9, 9, 11, 0.78) 100%),
+    url("/auth-galaxy.jpg") center / cover no-repeat;
+}
+
+.home-top {
+  display: flex;
+  justify-content: flex-start;
+  min-height: 2.5rem;
+}
+
+.home-screen .account-menu {
+  position: relative;
+}
+
+.home-screen .home-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.85rem;
+  width: min(100%, 20.5rem);
+  margin: 0 auto;
+  text-align: center;
+}
+
+.home-card h1 {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 700;
+  color: #fafafa;
+}
+
+.home-card p {
+  margin: 0;
+  color: #d4d4d8;
+  font-size: 0.92rem;
+  line-height: 1.7;
+}
+
+.home-links {
+  display: flex;
+  justify-content: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+
+.home-link {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  background: #3f3f46;
+  color: #fafafa;
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.info-screen {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background:
+    linear-gradient(180deg, rgba(9, 9, 11, 0.35) 0%, rgba(9, 9, 11, 0.75) 100%),
+    url("/auth-galaxy.jpg") center / cover no-repeat;
+}
+
+.info-card {
+  width: min(100%, 22rem);
+  padding: 1.1rem 1.15rem 1.25rem;
+  border-radius: 1.25rem;
+  background: rgba(24, 24, 27, 0.82);
+  border: 1px solid #3f3f46;
+  text-align: right;
+}
+
+.info-back {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  color: #d4d4d8;
+  font-size: 1.1rem;
+  text-decoration: none;
+}
+
+.info-card h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  color: #fafafa;
+}
+
+.info-lead {
+  margin: 0 0 0.85rem;
+  color: #e4e4e7;
+  font-size: 0.9rem;
+  line-height: 1.75;
+}
+
+.info-list {
+  margin: 0;
+  padding-right: 1.1rem;
+  color: #d4d4d8;
+  font-size: 0.88rem;
+  line-height: 1.8;
+}
+
+.info-phone {
+  display: inline-block;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  background: #52525b;
+  color: #fafafa;
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.info-note,
+.info-muted {
+  margin: 0;
+  color: #a1a1aa;
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
 /* ——— Admin measurements ——— */
 
 .admin-shell {
