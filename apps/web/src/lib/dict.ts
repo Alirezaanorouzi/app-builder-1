@@ -1,5 +1,5 @@
 export const fa = {
-  appName: "اپ‌ساز",
+  appName: "بیلدر",
   login: "ورود",
   register: "ثبت‌نام",
   email: "ایمیل",
