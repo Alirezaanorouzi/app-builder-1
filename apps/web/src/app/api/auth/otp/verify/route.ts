@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     checked.phone,
     parsed.data.purpose,
     req.headers.get("user-agent") ?? undefined,
+    parsed.data.displayName,
   );
   if ("error" in auth) {
     return NextResponse.json({ error: auth.error }, { status: auth.httpStatus });

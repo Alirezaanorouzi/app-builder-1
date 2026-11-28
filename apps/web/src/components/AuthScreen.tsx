@@ -10,6 +10,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
   const purpose = mode === "login" ? "login" : "signup";
   const [step, setStep] = useState<Step>("phone");
   const [phone, setPhone] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [phoneDisplay, setPhoneDisplay] = useState("");
   const [code, setCode] = useState("");
   const [challengeId, setChallengeId] = useState("");
@@ -28,7 +29,12 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
 
   async function sendOtp() {
     const nextPhone = phone.trim();
+    const nextName = displayName.trim();
     if (!nextPhone || pending) return;
+    if (!isLogin && nextName.length < 2) {
+      setError("نام را وارد کنید");
+      return;
+    }
     setError("");
     setPending(true);
     try {
@@ -70,7 +76,12 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
       const res = await fetch("/api/auth/otp/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challengeId, code, purpose }),
+        body: JSON.stringify({
+          challengeId,
+          code,
+          purpose,
+          ...(purpose === "signup" ? { displayName: displayName.trim() } : {}),
+        }),
       });
       const data = (await res.json().catch(() => null)) as { projectId?: string; error?: string } | null;
       if (res.ok) {
@@ -96,6 +107,20 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
         >
           <h1>{fa.appName}</h1>
           <p>{isLogin ? fa.phoneLogin : fa.phoneRegister}</p>
+          {!isLogin ? (
+            <input
+              className="auth-field"
+              name="displayName"
+              type="text"
+              autoComplete="name"
+              placeholder={fa.name}
+              aria-label={fa.name}
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              required
+              maxLength={80}
+            />
+          ) : null}
           <input
             className="auth-field"
             name="phone"
@@ -110,7 +135,11 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             required
           />
           {error ? <p className="auth-error">{error}</p> : null}
-          <button className="auth-submit" type="submit" disabled={pending || !phone.trim()}>
+          <button
+            className="auth-submit"
+            type="submit"
+            disabled={pending || !phone.trim() || (!isLogin && displayName.trim().length < 2)}
+          >
             {fa.sendOtp}
           </button>
           <Link href={isLogin ? "/register" : "/login"}>{isLogin ? fa.register : fa.login}</Link>

@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { userContactLine, userDisplayLabel } from "@/lib/user-label";
 
 type Detail = {
   user: {
     id: string;
-    email: string;
+    phone: string | null;
     display_name: string | null;
     created_at: string;
   };
@@ -84,10 +85,10 @@ export default function AdminUserPage() {
           <p className="admin-kicker">
             <Link href="/admin">Measurements</Link>
           </p>
-          <h1>{detail ? detail.user.display_name || detail.user.email : "…"}</h1>
+          <h1>{detail ? userDisplayLabel(detail.user) : "…"}</h1>
           {detail ? (
             <p className="admin-muted">
-              {detail.user.email} · signed up {when(detail.user.created_at)}
+              <span dir="ltr">{userContactLine(detail.user)}</span> · signed up {when(detail.user.created_at)}
               {detail.usage
                 ? ` · ${detail.usage.toman.toLocaleString("en-US", { maximumFractionDigits: 1 })} toman · ${detail.usage.calls} calls · ${detail.usage.promptTokens.toLocaleString("en-US")} prompt · ${detail.usage.completionTokens.toLocaleString("en-US")} completion · ${detail.usage.cacheReadTokens.toLocaleString("en-US")} cached`
                 : ""}

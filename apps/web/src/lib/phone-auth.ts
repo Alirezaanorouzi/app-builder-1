@@ -8,6 +8,7 @@ export async function finishPhoneAuth(
   phone: string,
   purpose: OtpPurpose,
   userAgent?: string,
+  displayName?: string,
 ): Promise<{ projectId: string } | { error: string; httpStatus: number }> {
   const stored = normalizeIranMobile(phone);
   if (!stored) return { error: "شماره موبایل نادرست است", httpStatus: 400 };
@@ -27,10 +28,12 @@ export async function finishPhoneAuth(
 
   if (user) return { error: "این شماره قبلاً ثبت شده", httpStatus: 409 };
 
+  const name = displayName?.trim() || formatIranMobile(stored);
+
   try {
     const ins = await query<{ id: string }>(
       `INSERT INTO users (phone, display_name) VALUES ($1, $2) RETURNING id`,
-      [stored, formatIranMobile(stored)],
+      [stored, name],
     );
     const userId = ins.rows[0].id;
     await query(`INSERT INTO user_limits (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, [userId]);

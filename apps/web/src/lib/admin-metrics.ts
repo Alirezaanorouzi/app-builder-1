@@ -219,7 +219,7 @@ export type AdminUserMessage = {
 
 export type AdminUserRow = {
   id: string;
-  email: string;
+  phone: string | null;
   display_name: string | null;
   created_at: string;
   projects: number;
@@ -262,7 +262,7 @@ export async function loadAdminUsers(): Promise<AdminUserRow[]> {
   const res = await query<AdminUserRow>(
     `SELECT
        u.id,
-       u.email::text AS email,
+       u.phone,
        u.display_name,
        u.created_at,
        (SELECT COUNT(*)::int FROM projects p
@@ -354,12 +354,12 @@ export async function loadAdminUsers(): Promise<AdminUserRow[]> {
 export async function loadAdminUser(userId: string) {
   const user = await query<{
     id: string;
-    email: string;
+    phone: string | null;
     display_name: string | null;
     created_at: string;
     status: string;
   }>(
-    `SELECT id, email::text AS email, display_name, created_at, status
+    `SELECT id, phone, display_name, created_at, status
      FROM users WHERE id = $1 AND status <> 'deleted'`,
     [userId],
   );

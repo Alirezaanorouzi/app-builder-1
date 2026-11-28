@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { userContactLine, userDisplayLabel } from "@/lib/user-label";
 
 type Funnel = {
   signups: number;
@@ -31,7 +32,7 @@ type Overview = {
 
 type UserRow = {
   id: string;
-  email: string;
+  phone: string | null;
   display_name: string | null;
   created_at: string;
   projects: number;
@@ -237,9 +238,11 @@ export default function AdminPage() {
                 <tr key={user.id}>
                   <td>
                     <Link href={`/admin/users/${user.id}`}>
-                      {user.display_name || user.email}
+                      {userDisplayLabel(user)}
                     </Link>
-                    <div className="admin-muted">{user.email}</div>
+                    <div className="admin-muted" dir="ltr">
+                      {userContactLine(user)}
+                    </div>
                     <div className="admin-user-detail">
                       <div className="admin-kicker">Messages sent</div>
                       {(user.recent_user_messages ?? []).length === 0 ? (

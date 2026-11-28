@@ -1,18 +1,10 @@
-import { hash, verify } from "@node-rs/argon2";
 import { cookies } from "next/headers";
 import { createHash, randomBytes } from "crypto";
 import { query } from "./db";
+import { normalizeIranMobile } from "./phone";
 
 const SESSION_COOKIE = "ab_session";
 const SESSION_DAYS = 30;
-
-export async function hashPassword(password: string) {
-  return hash(password, { memoryCost: 19456, timeCost: 2, parallelism: 1 });
-}
-
-export async function verifyPassword(hashStr: string, password: string) {
-  return verify(hashStr, password);
-}
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -66,17 +58,31 @@ function adminEmails(): Set<string> {
   );
 }
 
-/** Logged-in user whose email is listed in ADMIN_EMAILS. */
-export async function requireAdmin(): Promise<{ id: string; email: string } | null> {
+function adminPhones(): Set<string> {
+  const out = new Set<string>();
+  for (const part of (process.env.ADMIN_PHONES ?? "").split(",")) {
+    const normalized = normalizeIranMobile(part.trim());
+    if (normalized) out.add(normalized);
+  }
+  return out;
+}
+
+/** Logged-in user listed in ADMIN_EMAILS and/or ADMIN_PHONES. */
+export async function requireAdmin(): Promise<{ id: string } | null> {
   const userId = await getSessionUserId();
   if (!userId) return null;
-  const allow = adminEmails();
-  if (allow.size === 0) return null;
-  const res = await query<{ email: string }>(
-    `SELECT email::text AS email FROM users WHERE id = $1 AND status = 'active'`,
+  const emails = adminEmails();
+  const phones = adminPhones();
+  if (emails.size === 0 && phones.size === 0) return null;
+  const res = await query<{ email: string | null; phone: string | null }>(
+    `SELECT email::text AS email, phone FROM users WHERE id = $1 AND status = 'active'`,
     [userId],
   );
-  const email = res.rows[0]?.email?.trim().toLowerCase();
-  if (!email || !allow.has(email)) return null;
-  return { id: userId, email };
+  const row = res.rows[0];
+  if (!row) return null;
+  const email = row.email?.trim().toLowerCase();
+  const phone = row.phone ? normalizeIranMobile(row.phone) : null;
+  if (email && emails.has(email)) return { id: userId };
+  if (phone && phones.has(phone)) return { id: userId };
+  return null;
 }
