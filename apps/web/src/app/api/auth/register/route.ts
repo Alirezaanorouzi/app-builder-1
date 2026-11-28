@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { formatIranMobile, normalizeIranMobile } from "@/lib/phone";
+import { projectAfterSignup } from "@/lib/project-bootstrap";
 
 export async function POST(req: Request) {
   const body = await req.json();
@@ -16,7 +17,8 @@ export async function POST(req: Request) {
     const userId = ins.rows[0].id;
     await query(`INSERT INTO user_limits (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, [userId]);
     await createSession(userId, req.headers.get("user-agent") ?? undefined);
-    return NextResponse.json({ ok: true });
+    const projectId = await projectAfterSignup(userId);
+    return NextResponse.json({ ok: true, projectId });
   } catch (err) {
     if ((err as { code?: string }).code === "23505") {
       return NextResponse.json({ error: "این شماره قبلاً ثبت شده" }, { status: 409 });

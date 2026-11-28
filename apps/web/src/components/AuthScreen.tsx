@@ -21,11 +21,12 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),
       });
+      const data = (await res.json().catch(() => null)) as { projectId?: string; error?: string } | null;
       if (res.ok) {
-        window.location.href = "/";
+        if (data?.projectId) window.location.href = `/projects/${data.projectId}`;
+        else window.location.href = "/";
         return;
       }
-      const data = (await res.json().catch(() => null)) as { error?: string } | null;
       setError(data?.error ?? "خطا");
     } finally {
       setPending(false);

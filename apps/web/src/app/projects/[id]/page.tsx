@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useProjectStream } from "@/hooks/useProjectStream";
 import { useParams } from "next/navigation";
 import { AccountMenu } from "@/components/AccountMenu";
+import { HelpMenu } from "@/components/HelpMenu";
 import { ActivityRail } from "@/components/ActivityRail";
 import { ChatMessage } from "@/components/ChatMessage";
 import { Composer } from "@/components/Composer";
@@ -257,6 +258,7 @@ export default function ProjectPage() {
             {fa.preview}
           </button>
         </div>
+        <HelpMenu />
       </header>
 
       <main className={tab === "preview" ? "project-main project-main-preview" : "project-main"}>

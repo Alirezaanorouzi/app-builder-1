@@ -45,8 +45,8 @@ export const fa = {
   noProjects: "پروژه‌ای نیست",
   projectName: "نام پروژه",
   createProject: "ایجاد پروژه",
-  homeCreateProject: "برای ساخت وبسایتتون یک پروژه جدید ایجاد کنید",
   contactUs: "تماس با ما",
+  supportMenu: "پشتیبانی",
   aboutUs: "درباره ما",
   aboutTitle: "درباره بیلدر",
   aboutLead:
