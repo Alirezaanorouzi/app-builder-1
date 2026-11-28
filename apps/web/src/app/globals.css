@@ -612,6 +612,9 @@ a {
 
 .composer-prompts-viewport {
   overflow: hidden;
+  direction: ltr;
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .composer-prompts-track {
@@ -621,11 +624,7 @@ a {
   gap: 0.45rem;
   width: max-content;
   padding: 0.1rem 0;
-  animation: composer-prompt-marquee 50s linear infinite;
-}
-
-.composer-prompts-track:hover {
-  animation-play-state: paused;
+  direction: ltr;
 }
 
 .composer-prompt-chip {
@@ -640,30 +639,21 @@ a {
   line-height: 1.4;
   white-space: nowrap;
   cursor: pointer;
+  direction: rtl;
 }
 
 .composer-prompt-chip:hover {
   background: #52525b;
 }
 
-@keyframes composer-prompt-marquee {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .composer-prompts-track {
-    animation: none;
+  .composer-prompts-viewport {
     overflow-x: auto;
     max-width: 100%;
     scrollbar-width: none;
   }
 
-  .composer-prompts-track::-webkit-scrollbar {
+  .composer-prompts-viewport::-webkit-scrollbar {
     display: none;
   }
 }
